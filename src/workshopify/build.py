@@ -14,7 +14,9 @@ import shutil
 import subprocess
 import sys
 
+from collections.abc import MutableMapping
 from pathlib import Path
+from typing import Any
 
 import tomlkit
 
@@ -24,52 +26,70 @@ from workshopify.context import Context
 from workshopify.errors import WorkshopifyError
 from workshopify.git import git
 
+type _Table = MutableMapping[str, Any]
+type _Paths = dict[str, _Paths]
+
+
+def _paths(dotted: tuple[str, ...]) -> _Paths:
+    """Dotted paths as a tree of keys. A leaf names a whole subtree."""
+    root: _Paths = {}
+    for path in dotted:
+        node = root
+        for part in path.split('.'):
+            node = node.setdefault(part, {})
+    return root
+
+
+def _resolve(table: _Table, key: str, kind: str, path: str) -> _Table:
+    """The node at `key`, or the diagnostic for a path that matches nothing."""
+    if not isinstance(table, MutableMapping) or key not in table:
+        raise WorkshopifyError(
+            f'error: {kind} path {path!r} matches nothing in pyproject.toml',
+        )
+    return table[key]
+
+
+def _keep_only(table: _Table, paths: _Paths, prefix: str = '') -> None:
+    """Delete everything `paths` does not name. A leaf keeps its subtree."""
+    for key, children in paths.items():
+        node = _resolve(table, key, 'keep', prefix + key)
+        if children:
+            _keep_only(node, children, f'{prefix}{key}.')
+    for key in list(table):
+        if key not in paths:
+            del table[key]
+
+
+def _drop_all(table: _Table, paths: _Paths, prefix: str = '') -> None:
+    """Delete exactly what `paths` names, each with its subtree."""
+    for key, children in paths.items():
+        node = _resolve(table, key, 'drop', prefix + key)
+        if children:
+            _drop_all(node, children, f'{prefix}{key}.')
+        else:
+            del table[key]
+
 
 def derive_pyproject(text: str, keep: tuple[str, ...], drop: tuple[str, ...]) -> str:
     """The repo's pyproject with the authoring machinery stripped out.
 
     tomlkit rather than a tomllib/tomli-w round trip so the comments that make
-    the published pyproject readable survive. `keep` names the top-level
-    tables (or `parent.child` pairs) that ship; `drop` then removes exact
-    dotted keys from what was kept -- the workspace wiring under [tool.uv]
-    must not reach participants, who have no workshopify checkout to point at.
+    the published pyproject readable survive.
+
+    Both `keep` and `drop` are dotted paths of any depth, read the same way: a
+    path names a node, and naming a node takes its whole subtree with it. So
+    `keep = ('project', 'tool.uv')` ships all of [tool.uv] and nothing else
+    under [tool], and `drop` then carves pieces back out of what was kept --
+    the workspace wiring under [tool.uv] must not reach participants, who have
+    no workshopify checkout to point at.
+
+    A path on either side that matches nothing is an error, not a no-op: a
+    typo in `keep` would silently ship a pyproject missing a whole table, and
+    one in `drop` would silently ship the wiring `drop` exists to remove.
     """
     doc = tomlkit.parse(text)
-
-    kept_children: dict[str, set[str] | None] = {}
-    for name in keep:
-        head, _, child = name.partition('.')
-        if not child:
-            kept_children[head] = None
-            continue
-        # A None entry means the whole table is kept, which subsumes any
-        # child; leave it alone rather than narrowing it to a child list.
-        children = kept_children.get(head, set())
-        if children is not None:
-            children.add(child)
-            kept_children[head] = children
-
-    for key in list(doc.keys()):
-        children = kept_children.get(key, ...)
-        if children is ...:
-            del doc[key]
-        elif children is not None:
-            table = doc[key]
-            for child in list(table.keys()):
-                if child not in children:
-                    del table[child]
-
-    for dotted in drop:
-        node = doc
-        *parents, last = dotted.split('.')
-        for part in parents:
-            if not isinstance(node, dict) or part not in node:
-                node = None
-                break
-            node = node[part]
-        if node is not None and last in node:
-            del node[last]
-
+    _keep_only(doc, _paths(keep))
+    _drop_all(doc, _paths(drop))
     return tomlkit.dumps(doc)
 
 

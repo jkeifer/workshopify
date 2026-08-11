@@ -65,8 +65,67 @@ def test_derive_survives_a_multiline_string_containing_a_header():
         '[tool.ruff] is prose here, not a header\n'
         "'''\n"
     )
-    data = tomllib.loads(derive_pyproject(text, KEEP, ()))
+    data = tomllib.loads(derive_pyproject(text, ('project',), ()))
     assert '[tool.ruff]' in data['project']['description']
+
+
+def test_derive_keeps_a_nested_path():
+    """A keep path is any depth, and keeps only that child of its parent."""
+    text = (
+        '[project]\n'
+        'name = "x"\n'
+        '\n'
+        '[tool.ruff]\n'
+        'line-length = 100\n'
+        '\n'
+        '[tool.uv]\n'
+        'package = false\n'
+        '\n'
+        '[tool.uv.sources]\n'
+        'workshopify = { workspace = true }\n'
+    )
+    data = tomllib.loads(derive_pyproject(text, ('project', 'tool.uv.sources'), ()))
+    assert data['tool'] == {'uv': {'sources': {'workshopify': {'workspace': True}}}}
+
+
+def test_derive_keeps_the_whole_subtree_a_path_names():
+    """A kept path keeps everything under it; drop then carves pieces out."""
+    text = (
+        '[project]\n'
+        'name = "x"  # the name\n'
+        '\n'
+        '[tool.ruff]\n'
+        'line-length = 100\n'
+        '\n'
+        '[tool.uv]\n'
+        '# a comment inside the kept table\n'
+        'package = false\n'
+        '\n'
+        '[tool.uv.sources]\n'
+        'workshopify = { workspace = true }\n'
+        '\n'
+        '[tool.uv.workspace]\n'
+        'members = ["workshopify"]\n'
+    )
+    derived = derive_pyproject(text, KEEP, ('tool.uv.workspace',))
+    assert '# the name' in derived
+    assert '# a comment inside the kept table' in derived
+    data = tomllib.loads(derived)
+    assert data['tool'] == {
+        'uv': {'package': False, 'sources': {'workshopify': {'workspace': True}}},
+    }
+
+
+def test_derive_rejects_a_keep_path_matching_nothing():
+    text = '[project]\nname = "x"\n\n[tool.uv]\npackage = false\n'
+    with pytest.raises(WorkshopifyError, match='projekt'):
+        derive_pyproject(text, ('projekt', 'tool.uv'), ())
+
+
+def test_derive_rejects_a_deep_keep_path_matching_nothing():
+    text = '[project]\nname = "x"\n\n[tool.uv]\npackage = false\n'
+    with pytest.raises(WorkshopifyError, match=r'tool\.uv\.sources'):
+        derive_pyproject(text, ('project', 'tool.uv.sources'), ())
 
 
 def test_derive_drops_the_configured_keys():
@@ -92,9 +151,20 @@ def test_derive_drops_the_configured_keys():
     assert data['tool']['uv'] == {'package': False}
 
 
-def test_derive_drop_of_an_absent_key_is_a_no_op():
-    text = '[project]\nname = "x"\n'
-    assert tomllib.loads(derive_pyproject(text, KEEP, ('tool.nope.deep',)))
+def test_derive_rejects_a_drop_path_matching_nothing():
+    """A typo here would ship the workspace wiring; it must not be silent."""
+    text = (
+        '[project]\n'
+        'name = "x"\n'
+        '\n'
+        '[tool.uv]\n'
+        'package = false\n'
+        '\n'
+        '[tool.uv.workspace]\n'
+        'members = ["workshopify"]\n'
+    )
+    with pytest.raises(WorkshopifyError, match=r'tool\.uv\.wrkspace'):
+        derive_pyproject(text, KEEP, ('tool.uv.wrkspace',))
 
 
 # --- build tree assembly ---------------------------------------------------

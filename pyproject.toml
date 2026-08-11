@@ -87,7 +87,7 @@ ignore = [
 # progress to stderr by design. That `build.py` reports from library code
 # rather than returning a result for the CLI to print is a real design smell,
 # scheduled for the CLI/API pass -- not something to paper over permanently.
-'src/workshopify/build.py' = ['T201', 'S607', 'C901']
+'src/workshopify/build.py' = ['T201', 'S607']
 'src/workshopify/cli.py' = ['T201']
 'src/workshopify/notebooks.py' = ['T201']
 'src/workshopify/worktree.py' = ['T201']

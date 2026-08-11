@@ -39,6 +39,4 @@ The package is a src-layout library with one command-line surface.
   code instead of returning a result for `cli.py` to render. It is why
   `build.py` carries a `T201` ignore, and it should be fixed rather than
   entrenched.
-- `derive_pyproject` in `build.py` exceeds the complexity limit and carries a
-  `C901` ignore.
 - `__init__.py` is empty; the package has no curated public API yet.
