@@ -1,0 +1,44 @@
+name: "Continuous integration"
+
+concurrency:
+  group: ${{ github.ref }}
+  cancel-in-progress: false
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  ci:
+    name: Continuous integration
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # A matrix with one entry: adding 3.15 should be a one-line change.
+        python-version:
+          - "3.14"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # hatch-vcs derives the version from tags, so it needs full history.
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+      - name: Sync
+        run: uv sync --locked
+      - name: Hooks
+        run: uv run prek run --all-files
+      - name: Test
+        run: uv run pytest
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@e53489f4d376d79066609109e7a95a29eb3740b1 # v7.0.0
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        with:
+          fail_ci_if_error: false
+          verbose: true
