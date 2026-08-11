@@ -1,9 +1,8 @@
 import pytest
 
+from workshopify import context, render
 from workshopify.config import Config
 from workshopify.errors import WorkshopifyError
-
-from workshopify import context, render
 
 
 def _setup(fixture_repo):
@@ -65,7 +64,7 @@ def test_stale_asset_is_replaced(fixture_repo):
 def test_apply_refuses_a_missing_asset_source_before_writing(fixture_repo):
     (fixture_repo / 'assets/logo.png').unlink()
     config, ctx = _setup(fixture_repo)
-    with pytest.raises(WorkshopifyError, match='logo.png'):
+    with pytest.raises(WorkshopifyError, match=r'logo\.png'):
         render.apply(config, ctx)
 
 

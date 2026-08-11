@@ -31,7 +31,7 @@ def test_load_without_table_diagnoses(tmp_path):
 
 
 def test_load_without_pyproject_diagnoses(tmp_path):
-    with pytest.raises(WorkshopifyError, match='no pyproject.toml'):
+    with pytest.raises(WorkshopifyError, match=r'no pyproject\.toml'):
         Config.load(tmp_path)
 
 

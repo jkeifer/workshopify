@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from conftest import git_repo
+
 from workshopify.errors import WorkshopifyError
 from workshopify.worktree import prepare_worktree
 

@@ -8,11 +8,11 @@ from pathlib import Path
 import pytest
 
 from conftest import git_repo
+
+from workshopify import build, context
 from workshopify.build import derive_pyproject
 from workshopify.config import Config
 from workshopify.errors import WorkshopifyError
-
-from workshopify import build, context
 
 KEEP = ('project', 'tool.uv')
 

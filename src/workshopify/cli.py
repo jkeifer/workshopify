@@ -93,27 +93,32 @@ def _parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest='command', required=True)
 
     sub.add_parser(
-        'render', help='re-render templated values and assets in place'
+        'render',
+        help='re-render templated values and assets in place',
     ).set_defaults(func=_render)
     sub.add_parser(
-        'check', help='report stale rendered values or assets; exit 1 if any'
+        'check',
+        help='report stale rendered values or assets; exit 1 if any',
     ).set_defaults(func=_check)
 
     generate = sub.add_parser(
-        'generate', help='generate the notebooks and notes from src/'
+        'generate',
+        help='generate the notebooks and notes from src/',
     )
     generate.add_argument('--output-dir', type=Path, default=None)
     generate.set_defaults(func=_generate)
 
     build_cmd = sub.add_parser(
-        'build', help='assemble the published workshop tree into its branch worktree'
+        'build',
+        help='assemble the published workshop tree into its branch worktree',
     )
     build_cmd.add_argument('--clean', action='store_true')
     build_cmd.add_argument('--overwrite-dirty', action='store_true')
     build_cmd.set_defaults(func=_build)
 
     set_cmd = sub.add_parser(
-        'set', help='set a [tool.workshopify.params] value and re-render'
+        'set',
+        help='set a [tool.workshopify.params] value and re-render',
     )
     set_cmd.add_argument('key')
     set_cmd.add_argument('value')

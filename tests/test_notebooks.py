@@ -1,8 +1,7 @@
 import json
 
-from workshopify.config import Config
-
 from workshopify import context, notebooks
+from workshopify.config import Config
 
 
 def _setup(fixture_repo):

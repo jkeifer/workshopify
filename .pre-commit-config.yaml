@@ -1,0 +1,57 @@
+# Hooks are managed with prek (https://github.com/j178/prek), installed via the
+# uv dev dependency group along with the tools the hooks run:
+#
+#   uv sync                     # install prek, ruff, ty, etc.
+#   uv run prek install         # install the git hooks
+#   uv run prek run --all-files # run all hooks manually
+#
+# Every hook is `language: system` on purpose: each tool resolves from the
+# uv.lock-pinned project venv, and the hook runner never builds isolated
+# environments or installs anything itself. CI runs this same set.
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check
+        entry: ruff check --force-exclude
+        language: system
+        types_or: [python, pyi]
+        args: [--fix, --exit-non-zero-on-fix]
+        require_serial: true
+      - id: ruff-format
+        name: ruff format
+        entry: ruff format --force-exclude
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
+      - id: check-added-large-files
+        name: check for added large files
+        entry: check-added-large-files
+        language: system
+      - id: check-toml
+        name: check toml
+        entry: check-toml
+        language: system
+        types: [toml]
+      - id: check-yaml
+        name: check yaml
+        entry: check-yaml
+        language: system
+        types: [yaml]
+      - id: end-of-file-fixer
+        name: fix end of files
+        entry: end-of-file-fixer
+        language: system
+        types: [text]
+      - id: trailing-whitespace
+        name: trim trailing whitespace
+        entry: trailing-whitespace-fixer
+        language: system
+        types: [text]
+      - id: ty
+        name: ty check
+        entry: ty check
+        language: system
+        types_or: [python, pyi]
+        pass_filenames: false
+        require_serial: true
