@@ -1,5 +1,8 @@
 name: "Continuous integration"
 
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.ref }}
   cancel-in-progress: false
@@ -36,9 +39,10 @@ jobs:
       - name: Test
         run: uv run pytest
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@e53489f4d376d79066609109e7a95a29eb3740b1 # v7.0.0
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
         with:
+          files: ./coverage.xml
           fail_ci_if_error: false
           verbose: true
