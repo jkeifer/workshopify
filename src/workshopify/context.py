@@ -54,10 +54,17 @@ def load(config: Config) -> Context:
         raise WorkshopifyError(
             f'error: {path}: ASSETS must map target path -> source path',
         )
-    assets: dict[Path, Path] = {}
-    for target, source in declared.items():
-        t, s = Path(target), Path(source)
-        assets[(t if t.is_absolute() else config.root / t).resolve()] = (
-            s if s.is_absolute() else config.root / s
-        ).resolve()
+    bad = [
+        p for pair in declared.items() for p in pair if not isinstance(p, str | Path)
+    ]
+    if bad:
+        raise WorkshopifyError(
+            f'error: {path}: ASSETS paths must be str or Path, not {bad!r}',
+        )
+    # `root / p` already yields `p` itself when `p` is absolute, so this is
+    # the "resolve relative entries against the root" rule for both cases.
+    assets = {
+        (config.root / target).resolve(): (config.root / source).resolve()
+        for target, source in declared.items()
+    }
     return Context(namespace=namespace, assets=assets)

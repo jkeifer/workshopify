@@ -29,6 +29,16 @@ def test_assets_resolve_against_the_root(fixture_repo):
     }
 
 
+def test_absolute_asset_paths_are_kept_as_given(fixture_repo, tmp_path):
+    target = tmp_path / 'elsewhere' / 'logo.png'
+    source = tmp_path / 'source' / 'logo.png'
+    (fixture_repo / 'context.py').write_text(
+        f'word = "x"\nASSETS = {{{str(target)!r}: {str(source)!r}}}\n',
+    )
+    ctx = context.load(Config.load(fixture_repo))
+    assert ctx.assets == {target.resolve(): source.resolve()}
+
+
 def test_sibling_imports_work(fixture_repo):
     (fixture_repo / 'helper.py').write_text('VALUE = 42\n')
     (fixture_repo / 'context.py').write_text(
@@ -62,4 +72,10 @@ def test_an_arbitrary_crash_is_wrapped_with_the_module_named(fixture_repo):
 def test_assets_must_be_a_dict(fixture_repo):
     (fixture_repo / 'context.py').write_text("word = 'x'\nASSETS = ['nope']\n")
     with pytest.raises(WorkshopifyError, match='ASSETS'):
+        context.load(Config.load(fixture_repo))
+
+
+def test_assets_entries_must_be_paths(fixture_repo):
+    (fixture_repo / 'context.py').write_text("word = 'x'\nASSETS = {'a.png': 3}\n")
+    with pytest.raises(WorkshopifyError, match='str or Path'):
         context.load(Config.load(fixture_repo))
