@@ -27,14 +27,16 @@ from __future__ import annotations
 import json
 import sys
 
+from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import jupytext
 
 from ipynb_scrubber.config import FileEntry, ProjectConfig, ScrubbingOptions
 from ipynb_scrubber.exceptions import ScrubberError
-from ipynb_scrubber.processor import process_notebook, write_notes_file
+from ipynb_scrubber.processor import Notebook, process_notebook, write_notes_file
 from jupytext.config import load_jupytext_configuration_file
 
 from workshopify.config import Config
@@ -56,7 +58,7 @@ def _rebase(entry: FileEntry, output_dir: Path) -> FileEntry:
     )
 
 
-def _dump(notebook: dict, dest: Path) -> None:
+def _dump(notebook: Mapping[str, Any], dest: Path) -> None:
     """One convention for every .ipynb written: the completed and exercise
     notebooks are published side by side, so they must agree on it.
 
@@ -68,7 +70,7 @@ def _dump(notebook: dict, dest: Path) -> None:
     dest.write_text(json.dumps(notebook, indent=1, ensure_ascii=False) + '\n')
 
 
-def _render_completed(config: Config, ctx: Context, dest: Path) -> dict:
+def _render_completed(config: Config, ctx: Context, dest: Path) -> Notebook:
     """src/<stem>.py -> the completed notebook: written to dest and returned.
 
     Cell ids are derived from the notebook stem and cell index. nbformat mints
@@ -98,27 +100,38 @@ def _render_completed(config: Config, ctx: Context, dest: Path) -> dict:
     return notebook
 
 
-def _scrub(notebook: dict, entry: FileEntry, options: ScrubbingOptions) -> bool:
+def _scrub(
+    notebook: Notebook,
+    entry: FileEntry,
+    options: ScrubbingOptions,
+) -> Path | None:
     """Completed notebook -> exercise notebook (+ notes), via the scrubber API.
 
-    Returns whether a notes file was written. This is the code that decides
-    that -- a configured notes-file is only written when the notebook has
-    note-tagged cells -- so it is the only place that can answer without
-    re-deriving the answer from the filesystem afterwards.
+    Returns the notes file written, or None. This is the code that decides
+    whether there is one -- a configured notes-file is only written when the
+    notebook has note-tagged cells -- so it is the only place that can answer
+    without re-deriving the answer from the filesystem afterwards. Returning
+    the path rather than a bool keeps the "notes implies a notes_file"
+    invariant checkable where it is established, instead of leaving the caller
+    to re-assert it.
     """
     processed, notes = process_notebook(notebook, options)
 
-    if notes:
-        if entry.notes_file is None:
-            raise WorkshopifyError(
-                f'error: {entry.input} has {len(notes)} cell(s) tagged '
-                f'"{options.note_tag}" but no notes-file is configured',
-            )
-        write_notes_file(notes, entry.notes_file)
+    if not notes:
+        _dump(processed, entry.output)
+        print(f'✓ {entry.input} → {entry.output}', file=sys.stderr)
+        return None
+
+    if entry.notes_file is None:
+        raise WorkshopifyError(
+            f'error: {entry.input} has {len(notes)} cell(s) tagged '
+            f'"{options.note_tag}" but no notes-file is configured',
+        )
+    write_notes_file(notes, entry.notes_file)
 
     _dump(processed, entry.output)
     print(f'✓ {entry.input} → {entry.output}', file=sys.stderr)
-    return bool(notes)
+    return entry.notes_file
 
 
 def generate(config: Config, ctx: Context, output_dir: Path) -> list[Path]:
@@ -143,9 +156,13 @@ def generate(config: Config, ctx: Context, output_dir: Path) -> list[Path]:
     for configured in project.files:
         entry = _rebase(configured, output_dir)
         notebook = _render_completed(config, ctx, entry.input)
-        wrote_notes = _scrub(notebook, entry, entry.get_options(project.global_options))
+        notes_file = _scrub(
+            notebook,
+            entry,
+            entry.get_options(project.global_options),
+        )
         # The completed and exercise notebooks are written unconditionally.
         written += [entry.input, entry.output]
-        if wrote_notes:
-            written.append(entry.notes_file)
+        if notes_file is not None:
+            written.append(notes_file)
     return written

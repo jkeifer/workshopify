@@ -41,8 +41,13 @@ def derive_pyproject(text: str, keep: tuple[str, ...], drop: tuple[str, ...]) ->
         head, _, child = name.partition('.')
         if not child:
             kept_children[head] = None
-        elif kept_children.get(head, set()) is not None:
-            kept_children.setdefault(head, set()).add(child)
+            continue
+        # A None entry means the whole table is kept, which subsumes any
+        # child; leave it alone rather than narrowing it to a child list.
+        children = kept_children.get(head, set())
+        if children is not None:
+            children.add(child)
+            kept_children[head] = children
 
     for key in list(doc.keys()):
         children = kept_children.get(key, ...)
