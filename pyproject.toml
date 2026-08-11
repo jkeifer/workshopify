@@ -1,18 +1,118 @@
 [project]
-name = "workshopify"
-version = "0.1.0"
-description = "Skeleton and scaffolding for template-rendered, notebook-based workshop repositories"
-requires-python = ">=3.12"
+name = 'workshopify'
+description = 'Skeleton and scaffolding for template-rendered, notebook-based workshop repositories'
+readme = 'README.md'
+authors = [
+    {name = 'Jarrett Keifer', email = 'jkeifer0@gmail.com'},
+]
+license = 'Apache-2.0'
+license-files = ['LICENSE']
+requires-python = '>=3.14'
 dependencies = [
-    "cogapp>=3.5.1",
-    "ipynb-scrubber>=0.4.1",
-    "jupytext>=1.19.4",
-    "tomlkit>=0.13.2",
+    'cogapp>=3.5.1',
+    'ipynb-scrubber>=0.4.1',
+    'jupytext>=1.19.4',
+    'tomlkit>=0.13.2',
+]
+dynamic = [
+    'version',
 ]
 
+[project.urls]
+Repository = 'https://github.com/jkeifer/workshopify'
+
 [project.scripts]
-workshopify = "workshopify.cli:main"
+workshopify = 'workshopify.cli:main'
 
 [build-system]
-requires = ["uv_build>=0.6,<0.12"]
-build-backend = "uv_build"
+requires = [
+    'hatchling',
+    'hatch-vcs',
+]
+build-backend = 'hatchling.build'
+
+[tool.hatch.version]
+source = 'vcs'
+# There are no tags yet, and hatch-vcs fails the build without a fallback.
+fallback-version = '0.0.0'
+
+[tool.hatch.build.hooks.vcs]
+version-file = 'src/workshopify/__version__.py'
+
+[tool.hatch.build.targets.wheel]
+packages = ['src/workshopify']
+
+[tool.ruff.format]
+quote-style = 'single'
+
+[tool.ruff.lint]
+# https://docs.astral.sh/ruff/rules/
+select = [
+    'B',
+    'BLE',
+    'C4',
+    'C90',
+    'COM',
+    'DTZ',
+    'E',
+    'ERA',
+    'F',
+    'FA',
+    'G',
+    'I',
+    'INP',
+    'N',
+    'NPY',
+    'PT',
+    'PTH',
+    'RET',
+    'RUF',
+    'S',
+    'SIM',
+    'T20',
+    'UP',
+    'W',
+]
+
+[tool.ruff.lint.per-file-ignores]
+# The CLI is the one place a failure becomes output, and these modules report
+# progress to stderr by design. That `build.py` reports from library code
+# rather than returning a result for the CLI to print is a real design smell,
+# scheduled for the CLI/API pass -- not something to paper over permanently.
+'src/workshopify/build.py' = ['T201', 'S607', 'C901']
+'src/workshopify/cli.py' = ['T201']
+'src/workshopify/notebooks.py' = ['T201']
+'src/workshopify/worktree.py' = ['T201']
+# `git` is invoked by name so the user's git (version, config, credential
+# helpers) is the one that runs; resolving an absolute path would defeat that.
+# The argument lists are constructed here, never taken from user input.
+'src/workshopify/git.py' = ['S603', 'S607']
+# Tests assert (S101), shell out to `git` by name to build fixture repos
+# (S603/S607), and are an intentionally unpackaged directory (INP001).
+'tests/**/*' = ['S101', 'S603', 'S607', 'INP001']
+
+[tool.ruff.lint.isort]
+lines-between-types = 1
+
+[tool.ty.environment]
+python-version = '3.14'
+
+[tool.pytest.ini_options]
+testpaths = 'tests'
+addopts = ['--cov=workshopify']
+filterwarnings = ['error']
+
+[tool.coverage.report]
+show_missing = true
+skip_empty = true
+sort = 'Cover'
+
+[dependency-groups]
+dev = [
+    'pre-commit-hooks>=6.0.0',
+    'prek>=0.4.8',
+    'pytest>=8.4.2',
+    'pytest-cov>=7.0.0',
+    'ruff>=0.16.2',
+    'ty>=0.0.70',
+]
