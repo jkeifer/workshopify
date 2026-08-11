@@ -1,0 +1,44 @@
+# workshopify
+
+Scaffolding for template-rendered, notebook-based workshop repositories. See
+[`CONTRIBUTING.md`](CONTRIBUTING.md) for setup, hooks, and release mechanics.
+
+## Layering
+
+The package is a src-layout library with one command-line surface.
+
+| Module | Responsibility |
+| --- | --- |
+| `config.py` | The declarative half: parses `[tool.workshopify]` into frozen dataclasses. Names the context module but never executes it. |
+| `context.py` | Loads and executes the workshop's context module, yielding the namespace the cog generators run in and the declared `ASSETS` map. |
+| `render.py` | The cog render engine: rendering values in place, checking they are current, and stripping the templating for publication. |
+| `notebooks.py` | `src/*.py` to completed notebooks to exercise notebooks and notes, via jupytext and ipynb-scrubber. |
+| `build.py` | Assembles the published tree and publishes it into a worktree. |
+| `worktree.py` | Prepares the branch worktree a build publishes into. |
+| `params.py` | Rewrites `[tool.workshopify.params]` values in pyproject.toml. |
+| `git.py` | The single git subprocess helper. |
+| `errors.py` | `WorkshopifyError`. |
+| `cli.py` | The only place a failure becomes a process exit. |
+
+## Invariants
+
+- **Nothing below `cli.py` exits the process.** Every module raises
+  `WorkshopifyError` carrying the full diagnostic; `cli.py` prints it to stderr
+  and returns 1. Do not add `sys.exit` anywhere else.
+- **Generated output is a pure function of its source.** Notebook cell ids are
+  positional, not random, so re-rendering an unchanged source produces a
+  byte-identical file and a publish diff contains only real changes.
+- **`generate()` reports the files it wrote**, derived from what the writing
+  steps returned rather than from a glob of the output directory. The build
+  subtracts that set from the published branch's tracked files to catch a
+  renamed exercise still shipping its old file.
+
+## Known rough edges
+
+- `build.py` prints progress and publish instructions to stderr from library
+  code instead of returning a result for `cli.py` to render. It is why
+  `build.py` carries a `T201` ignore, and it should be fixed rather than
+  entrenched.
+- `derive_pyproject` in `build.py` exceeds the complexity limit and carries a
+  `C901` ignore.
+- `__init__.py` is empty; the package has no curated public API yet.
