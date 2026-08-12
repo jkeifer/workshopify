@@ -18,44 +18,68 @@ from pathlib import Path
 from workshopify import deps, notebooks, worktree
 from workshopify.config import Config
 from workshopify.context import Context
-from workshopify.errors import WorkshopifyError
+from workshopify.errors import WorkshopifyError, diagnosed
 from workshopify.git import git
 
 
 def _copy(source: Path, dest: Path) -> list[Path]:
     """Copy a file or directory tree, returning the files written.
 
-    The return value is derived from the source, never from a glob of the
-    destination. copytree(dirs_exist_ok=True) merges rather than replaces,
-    so on a rebuild into a reused worktree a destination glob would report
-    files this build never wrote -- hiding stale leftovers from the caller's
-    cruft check instead of flagging them.
+    One traversal both copies and reports, so the two cannot disagree. Walking
+    the source separately did disagree: `shutil.copytree` follows a symlinked
+    directory and copies what is under it, while `rglob('*')` does not recurse
+    into one, so everything under a `data/link -> ../shared` was written and
+    never reported -- flagged as cruft by `unwritten()` on every build, and
+    unclearable by --clean, since the next build writes it again and still
+    says nothing.
+
+    A glob of the destination would be wrong in the other direction: a rebuild
+    merges into a worktree an earlier build wrote, so leftovers this build
+    never wrote would be reported as written and hidden from that same cruft
+    check.
+
+    `shutil.copy` rather than `copyfile` because copyfile leaves an existing
+    destination's own mode alone and mints a fresh one from the umask
+    otherwise: a `setup.sh` shipped executable from a directory include but
+    not as a single file, and byte-identical content took a different git mode
+    on a rebuild into a reused worktree than in a fresh one. Mode is the
+    source's, on every path through here.
     """
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    if source.is_dir():
-        shutil.copytree(source, dest, dirs_exist_ok=True)
+    with diagnosed(f'copying {source} to {dest}'):
+        if not source.is_dir():
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(source, dest)
+            return [dest]
         return [
-            dest / p.relative_to(source)
-            for p in sorted(source.rglob('*'))
-            if p.is_file()
+            written
+            for child in sorted(source.iterdir())
+            for written in _copy(child, dest / child.name)
         ]
-    shutil.copyfile(source, dest)
-    return [dest]
 
 
-def _rebase_asset(target: Path, root: Path, staging: Path) -> Path:
-    """Where an asset target lands under staging.
+def _include_source(config: Config, name: str) -> Path:
+    """The repo file or directory one include entry names.
 
-    Asset targets are absolute paths under the repo root; rebasing them under
-    staging means relative_to(root). A target outside root is a config error,
-    diagnosed here rather than letting relative_to's bare ValueError escape.
+    An include entry is a single name used twice -- `root / name` to read and
+    `staging / name` to write -- so a name that is not both relative and free
+    of `..` breaks that pairing rather than the read. An absolute entry makes
+    the two the same path, and the copy an uncaught SameFileError; PurePath
+    normalizes nothing, so `../shared` is read and written outside the
+    worktree, whereupon `relative_to(staging)` succeeds lexically and the
+    build reports `../shared/...` as cruft no --clean can ever resolve. Both
+    are config errors, named here while the entry as the author spelled it is
+    still in hand.
     """
-    try:
-        return staging / target.relative_to(root)
-    except ValueError as e:
+    entry = Path(name)
+    if entry.is_absolute() or '..' in entry.parts:
         raise WorkshopifyError(
-            f'error: asset target {target} is outside the repo root {root}',
-        ) from e
+            f'error: include entry {name!r} must be a relative path inside '
+            f'the repo root {config.root}',
+        )
+    source = config.root / entry
+    if not source.exists():
+        raise WorkshopifyError(f'error: include entry {name!r} does not exist')
+    return source
 
 
 def build(config: Config, ctx: Context, staging: Path) -> set[Path]:
@@ -67,23 +91,21 @@ def build(config: Config, ctx: Context, staging: Path) -> set[Path]:
     written: list[Path] = []
 
     for name in config.build.include:
-        source = config.root / name
-        if not source.exists():
-            raise WorkshopifyError(f'error: include entry {name!r} does not exist')
-        written += _copy(source, staging / name)
+        written += _copy(_include_source(config, name), staging / name)
 
     static_dir = config.root / 'static'
     if static_dir.is_dir():
         for source in sorted(p for p in static_dir.rglob('*') if p.is_file()):
             written += _copy(source, staging / source.relative_to(static_dir))
 
+    # context.load already refuses a target outside the root, so this is the
+    # same question asked of a Context that came from somewhere else.
     for target, source in sorted(ctx.assets.items()):
-        written += _copy(source, _rebase_asset(target, config.root, staging))
+        written += _copy(source, config.rebase(target, staging, 'asset target'))
 
     written += notebooks.generate(config, ctx, staging)
 
-    deps.write_deps(config, staging)
-    written += [staging / 'pyproject.toml', staging / 'uv.lock']
+    written += deps.write_deps(config, staging)
 
     return {p.relative_to(staging) for p in written}
 

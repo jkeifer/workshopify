@@ -62,10 +62,25 @@ def load(config: Config) -> Context:
         raise WorkshopifyError(
             f'error: {path}: ASSETS paths must be str or Path, not {bad!r}',
         )
-    # `root / p` already yields `p` itself when `p` is absolute, so this is
-    # the "resolve relative entries against the root" rule for both cases.
-    assets = {
-        (config.root / target).resolve(): (config.root / source).resolve()
-        for target, source in declared.items()
-    }
+    assets: dict[Path, Path] = {}
+    spellings: dict[Path, str] = {}
+    for target, source in declared.items():
+        # `root / p` already yields `p` itself when `p` is absolute, so this is
+        # the "resolve relative entries against the root" rule for both cases.
+        resolved = (config.root / target).resolve()
+        # A target is where the file lands in the published tree, and there is
+        # no such place outside the repo: build would refuse it, so a repo
+        # declaring one renders clean forever and can never be published.
+        # Rebasing a repo path onto the root is the identity, which makes this
+        # `Config.rebase` asked purely for its judgment.
+        config.rebase(resolved, config.root, f'{path}: ASSETS target')
+        if resolved in assets:
+            raise WorkshopifyError(
+                f'error: {path}: ASSETS declares '
+                f'{config.display_path(resolved)} twice, as '
+                f'{spellings[resolved]!r} and {str(target)!r} -- one target has one '
+                f'source, and a dict keeps only the last of them',
+            )
+        spellings[resolved] = str(target)
+        assets[resolved] = (config.root / source).resolve()
     return Context(namespace=namespace, assets=assets)

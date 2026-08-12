@@ -29,14 +29,53 @@ def test_assets_resolve_against_the_root(fixture_repo):
     }
 
 
-def test_absolute_asset_paths_are_kept_as_given(fixture_repo, tmp_path):
-    target = tmp_path / 'elsewhere' / 'logo.png'
+def test_an_absolute_asset_target_inside_the_root_is_kept(fixture_repo, tmp_path):
+    """`root / target` is `target` itself when it is absolute, which is fine.
+
+    What a target must be is inside the repo, not relative; an author who
+    spells one out in full has said the same thing the long way.
+    """
+    target = fixture_repo / 'notebooks' / 'assets' / 'logo.png'
     source = tmp_path / 'source' / 'logo.png'
     (fixture_repo / 'context.py').write_text(
         f'word = "x"\nASSETS = {{{str(target)!r}: {str(source)!r}}}\n',
     )
     ctx = context.load(Config.load(fixture_repo))
     assert ctx.assets == {target.resolve(): source.resolve()}
+
+
+def test_an_asset_target_outside_the_repo_root_is_rejected(fixture_repo, tmp_path):
+    """A target names where the file lands in the published tree.
+
+    Outside the repo there is no such place: build cannot rebase it under the
+    worktree, so a repo declaring one renders and checks clean forever while
+    never being publishable. Refused here, where the author's own spelling of
+    it is still on screen.
+    """
+    target = tmp_path / 'elsewhere' / 'logo.png'
+    (fixture_repo / 'context.py').write_text(
+        f'word = "x"\nASSETS = {{{str(target)!r}: "assets/logo.png"}}\n',
+    )
+    with pytest.raises(WorkshopifyError, match='outside the repo root'):
+        context.load(Config.load(fixture_repo))
+
+
+def test_a_target_declared_twice_is_rejected(fixture_repo):
+    """Two spellings of one target are two answers to a one-answer question.
+
+    A dict keeps the last, so the asset built is whichever declaration came
+    second -- and check() then verifies the target against that source and
+    passes, with the other declaration doing nothing and saying nothing.
+    """
+    (fixture_repo / 'context.py').write_text(
+        "word = 'x'\n"
+        'ASSETS = {\n'
+        "    'notebooks/assets/logo.png': 'assets/logo.png',\n"
+        "    './notebooks/assets/logo.png': 'assets/other.png',\n"
+        '}\n',
+    )
+    with pytest.raises(WorkshopifyError, match='twice'):
+        context.load(Config.load(fixture_repo))
 
 
 def test_sibling_imports_work(fixture_repo):

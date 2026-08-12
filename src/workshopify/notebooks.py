@@ -30,45 +30,51 @@ rewritten temp config.
 
 from __future__ import annotations
 
+import hashlib
+import re
+
 from dataclasses import replace
 from pathlib import Path
 
 import jupytext
 
 from ipynb_scrubber import FileEntry, ProjectConfig, ScrubberError, scrub_parsed
-from jupytext.config import load_jupytext_configuration_file
+from jupytext.config import JupytextConfiguration, load_jupytext_configuration_file
 
 from workshopify.config import Config
 from workshopify.context import Context
 from workshopify.errors import WorkshopifyError
 from workshopify.render import publish
 
+# nbformat validates a cell id against ^[a-zA-Z0-9-_]+$, 1 to 64 characters.
+_ID_ILLEGAL = re.compile(r'[^A-Za-z0-9_-]')
+# The rest of that budget is the `-NNN` index suffix, with room to spare for a
+# notebook past its thousandth cell.
+_ID_STEM_MAX = 48
 
-def _rebase(entry: FileEntry, root: Path, output_dir: Path) -> FileEntry:
+
+def _rebase(entry: FileEntry, config: Config, output_dir: Path) -> FileEntry:
     """Repoint one config entry's paths at output_dir.
 
     The scrubber resolves what its config names against the directory it read
     that config from, so the paths arriving here are absolute and point into
-    the repo; output_dir may be a worktree. Joining an absolute path discards
-    output_dir entirely, so each is made relative to the root first -- without
-    that, a build writes its generated notebooks over the source tree and
-    reports success, which is the whole of the symptom.
+    the repo; output_dir may be a worktree. `Config.rebase` is what says where
+    such a path lands elsewhere -- without it a build writes its generated
+    notebooks over the source tree and reports success, which is the whole of
+    the symptom.
 
-    Both sides are resolved before the subtraction because one directory has
-    more than one spelling: on macOS a path under /var and the same path under
-    /private/var name the same place.
+    The wrapper exists only for what rebase cannot know: which config entry
+    handed it the path. An entry names three, and two of them do not name the
+    entry, so a bare diagnostic would leave the author reading a path they
+    cannot find in pyproject.toml.
     """
-    root = root.resolve()
+    what = (
+        f'the [[tool.ipynb-scrubber.files]] entry for '
+        f'{config.display_path(entry.input)}:'
+    )
 
     def under(path: Path) -> Path:
-        try:
-            return output_dir / path.resolve().relative_to(root)
-        except ValueError as e:
-            raise WorkshopifyError(
-                f'error: the [[tool.ipynb-scrubber.files]] entry for '
-                f'{entry.input} names {path}, which is outside the repo at '
-                f'{root}',
-            ) from e
+        return config.rebase(path, output_dir, what)
 
     return replace(
         entry,
@@ -76,6 +82,28 @@ def _rebase(entry: FileEntry, root: Path, output_dir: Path) -> FileEntry:
         output=under(entry.output),
         notes_file=under(entry.notes_file) if entry.notes_file else None,
     )
+
+
+def _id_stem(stem: str) -> str:
+    """`stem`, reduced to something nbformat accepts as part of a cell id.
+
+    A filename honours neither half of nbformat's rule: `01.example`, a stem
+    with a space, and a stem past 64 characters all mint ids that fail
+    validation in whatever reads the notebook next -- while this module writes
+    the file and reports success.
+
+    Every character rewritten or dropped is a character two stems could have
+    differed by, so anything not already legal and short enough carries a
+    digest of the stem it came from. Ids stay a pure function of the source
+    file, and two notebooks whose names differ only in punctuation or in their
+    tail cannot collapse onto one id space and produce a notebook holding the
+    same id twice.
+    """
+    legal = _ID_ILLEGAL.sub('-', stem)
+    if legal == stem and len(legal) <= _ID_STEM_MAX:
+        return legal
+    digest = hashlib.blake2b(stem.encode(), digest_size=4).hexdigest()
+    return f'{legal[: _ID_STEM_MAX - len(digest) - 1]}-{digest}'
 
 
 def _write(path: Path, text: str) -> None:
@@ -90,7 +118,12 @@ def _write(path: Path, text: str) -> None:
     path.write_text(text)
 
 
-def _render(config: Config, ctx: Context, entry: FileEntry) -> Path | None:
+def _render(
+    config: Config,
+    ctx: Context,
+    entry: FileEntry,
+    jt_config: JupytextConfiguration | None,
+) -> Path | None:
     """src/<stem>.py -> the completed and exercise notebooks, and any notes.
 
     Returns the notes file written, or None. This is the code that decides
@@ -107,18 +140,15 @@ def _render(config: Config, ctx: Context, entry: FileEntry) -> Path | None:
         raise WorkshopifyError(f'error: missing source file {src_py}')
 
     published = publish(ctx, src_py.read_text(), str(src_py))
-    # The [tool.jupytext] config must reach the API calls explicitly; only the
-    # CLI discovers it. Without it the cell metadata filter that keeps
-    # `raises-exception` tags falls back to defaults.
-    jt_config = load_jupytext_configuration_file(str(config.pyproject))
     notebook = jupytext.reads(published, fmt='py:percent', config=jt_config)
     # Cell ids are derived from the notebook stem and cell index. nbformat
     # mints a random uuid4 per cell, so without this a plain render rewrites
     # every cell of every notebook and a publish diff is pure churn;
     # positional ids make the render a pure function of its source, with
     # nothing to merge into.
+    id_stem = _id_stem(stem)
     for index, cell in enumerate(notebook['cells']):
-        cell['id'] = f'{stem}-{index:03d}'
+        cell['id'] = f'{id_stem}-{index:03d}'
 
     # entry.input is the completed notebook: workshopify generates what the
     # scrubber then consumes. It is written first because the scrub result
@@ -169,10 +199,16 @@ def generate(config: Config, ctx: Context, output_dir: Path) -> list[Path]:
     except ScrubberError as e:
         raise WorkshopifyError(f'error: {e}') from e
 
+    # The [tool.jupytext] config must reach the API calls explicitly; only the
+    # CLI discovers it. Without it the cell metadata filter that keeps
+    # `raises-exception` tags falls back to defaults. Read once here rather
+    # than per notebook: one pyproject cannot answer two of them differently.
+    jt_config = load_jupytext_configuration_file(str(config.pyproject))
+
     written: list[Path] = []
     for configured in project.files:
-        entry = _rebase(configured, config.root, output_dir)
-        notes_file = _render(config, ctx, entry)
+        entry = _rebase(configured, config, output_dir)
+        notes_file = _render(config, ctx, entry, jt_config)
         # The completed and exercise notebooks are written unconditionally.
         written += [entry.input, entry.output]
         if notes_file is not None:

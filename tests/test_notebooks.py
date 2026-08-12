@@ -1,12 +1,29 @@
 import json
+import re
+
+import nbformat
+import pytest
 
 from workshopify import context, notebooks
 from workshopify.config import Config
+from workshopify.errors import WorkshopifyError
+
+# nbformat's own rule for a cell id, restated so a test failure names it.
+CELL_ID = re.compile(r'^[a-zA-Z0-9-_]{1,64}$')
 
 
 def _setup(fixture_repo):
     config = Config.load(fixture_repo)
     return config, context.load(config)
+
+
+def _restem(fixture_repo, stem):
+    """Rename the fixture's one notebook, in pyproject and in src/, to `stem`."""
+    pyproject = fixture_repo / 'pyproject.toml'
+    pyproject.write_text(pyproject.read_text().replace('01_example', stem))
+    (fixture_repo / 'src' / '01_example.py').rename(
+        fixture_repo / 'src' / f'{stem}.py',
+    )
 
 
 def test_generate_writes_completed_exercise_and_notes(fixture_repo, tmp_path):
@@ -39,8 +56,61 @@ def test_cell_ids_are_positional_and_nbformat_legal(fixture_repo, tmp_path):
     cells = json.loads(completed.read_text())['cells']
     assert [c['id'] for c in cells][:2] == ['01_example-000', '01_example-001']
     for cell in cells:
-        assert 1 <= len(cell['id']) <= 64
-        assert all(ch.isalnum() or ch in '-_' for ch in cell['id'])
+        assert CELL_ID.match(cell['id']), cell['id']
+
+
+@pytest.mark.parametrize(
+    'stem',
+    [
+        pytest.param('01.example', id='punctuation'),
+        pytest.param('01 example', id='space'),
+        pytest.param('01_éxample', id='non-ascii'),
+        pytest.param('exercise_' + 'x' * 70, id='too-long'),
+    ],
+)
+def test_a_stem_nbformat_would_reject_still_mints_valid_ids(
+    stem,
+    fixture_repo,
+    tmp_path,
+):
+    """A filename obeys neither half of nbformat's rule for a cell id.
+
+    `01.example`, a space, an accent, and any stem past 64 characters each
+    produced an id that fails validation -- with the notebook written and the
+    run reporting success, so the first thing to say so is whatever opens the
+    published file.
+    """
+    _restem(fixture_repo, stem)
+    config, ctx = _setup(fixture_repo)
+    for path in notebooks.generate(config, ctx, tmp_path / 'out'):
+        if path.suffix != '.ipynb':
+            continue
+        nbformat.validate(nbformat.read(path, as_version=4))
+
+
+def test_id_stems_are_legal_deterministic_and_collision_free():
+    """Sanitizing folds distinct stems together; the digest is what unfolds them.
+
+    `01.example` and `01-example` differ only in a character the charset
+    forbids, and truncation makes any two long stems agree on their head --
+    either way two notebooks would share an id space and a merged notebook
+    would hold one id twice. Positional ids are only worth having if they
+    stay a pure function of the file they came from.
+    """
+    stems = [
+        '01_example',
+        '01.example',
+        '01-example',
+        '01 example',
+        '01_éxample',
+        'exercise_' + 'x' * 70,
+        'exercise_' + 'x' * 71,
+    ]
+    ids = [notebooks._id_stem(stem) for stem in stems]
+    for stem, id_stem in zip(stems, ids, strict=True):
+        assert CELL_ID.match(f'{id_stem}-000'), stem
+        assert notebooks._id_stem(stem) == id_stem, 'not a function of the stem'
+    assert len(set(ids)) == len(ids), ids
 
 
 def test_no_templating_reaches_any_notebook(fixture_repo, tmp_path):
@@ -98,10 +168,6 @@ def test_a_notes_file_with_no_notes_is_not_written_or_reported(
 
 
 def test_missing_source_file_diagnoses(fixture_repo, tmp_path):
-    import pytest
-
-    from workshopify.errors import WorkshopifyError
-
     (fixture_repo / 'src' / '01_example.py').rename(
         fixture_repo / 'src' / '02_other.py',
     )
@@ -112,10 +178,6 @@ def test_missing_source_file_diagnoses(fixture_repo, tmp_path):
 
 def test_a_configured_path_outside_the_repo_diagnoses(fixture_repo, tmp_path):
     """There is nowhere under output_dir to put it, and no traceback for it."""
-    import pytest
-
-    from workshopify.errors import WorkshopifyError
-
     pyproject = fixture_repo / 'pyproject.toml'
     pyproject.write_text(
         pyproject.read_text().replace(
@@ -128,12 +190,43 @@ def test_a_configured_path_outside_the_repo_diagnoses(fixture_repo, tmp_path):
         notebooks.generate(config, ctx, tmp_path / 'out')
 
 
+def test_notes_with_nowhere_to_go_diagnoses(fixture_repo, tmp_path):
+    """The notebook has noted cells and its entry configures no notes-file.
+
+    The scrubber renders the notes and hands them over regardless, so saying
+    nothing here ships an exercise whose cleared cells point at a "(See
+    notes: ...)" document that was never written.
+    """
+    pyproject = fixture_repo / 'pyproject.toml'
+    pyproject.write_text(
+        pyproject.read_text().replace('notes-file = "notes/01_example.md"\n', ''),
+    )
+    config, ctx = _setup(fixture_repo)
+    with pytest.raises(WorkshopifyError, match='no notes-file is configured'):
+        notebooks.generate(config, ctx, tmp_path / 'out')
+
+
+def test_a_malformed_scrubber_section_diagnoses(fixture_repo, tmp_path):
+    """[tool.ipynb-scrubber] is config this module reads but does not own.
+
+    ProjectConfig raises its own error type for a section it will not accept,
+    and the author who typo'd the key is owed the sentence naming it rather
+    than a traceback out of cli.
+    """
+    pyproject = fixture_repo / 'pyproject.toml'
+    pyproject.write_text(
+        pyproject.read_text().replace(
+            '[tool.ipynb-scrubber.options]',
+            '[tool.ipynb-scrubber]\nfliles = []\n\n[tool.ipynb-scrubber.options]',
+        ),
+    )
+    config, ctx = _setup(fixture_repo)
+    with pytest.raises(WorkshopifyError, match='fliles'):
+        notebooks.generate(config, ctx, tmp_path / 'out')
+
+
 def test_a_bad_marker_diagnoses_against_the_source_file(fixture_repo, tmp_path):
     """0.5.0 rejects a malformed marker, and that must not reach cli as a traceback."""
-    import pytest
-
-    from workshopify.errors import WorkshopifyError
-
     src = fixture_repo / 'src' / '01_example.py'
     # A marker without its colon: an error in the scrubber, and the likeliest
     # thing an author gets wrong.
