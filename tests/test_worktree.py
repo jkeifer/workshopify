@@ -37,7 +37,7 @@ def _decided(monkeypatch, *, local, remotes, orphan, head='main'):
             True,
             [],
             False,
-            (['/repo/pub', 'pub'], ()),
+            (('/repo/pub', 'pub'), ()),
             id='local-branch',
         ),
         pytest.param(
@@ -45,7 +45,7 @@ def _decided(monkeypatch, *, local, remotes, orphan, head='main'):
             ['origin'],
             False,
             (
-                ['--track', '-b', 'pub', '/repo/pub', 'origin/pub'],
+                ('--track', '-b', 'pub', '/repo/pub', 'origin/pub'),
                 ("creating 'pub' tracking origin/pub",),
             ),
             id='one-remote',
@@ -54,7 +54,7 @@ def _decided(monkeypatch, *, local, remotes, orphan, head='main'):
             False,
             [],
             True,
-            (['--orphan', '-b', 'pub', '/repo/pub'], ()),
+            (('--orphan', '-b', 'pub', '/repo/pub'), ()),
             id='orphan',
         ),
         pytest.param(
@@ -62,7 +62,7 @@ def _decided(monkeypatch, *, local, remotes, orphan, head='main'):
             [],
             False,
             (
-                ['-b', 'pub', '/repo/pub'],
+                ('-b', 'pub', '/repo/pub'),
                 ("note: no local or remote branch 'pub'; creating it from main",),
             ),
             id='new-from-head',
@@ -74,7 +74,7 @@ def _decided(monkeypatch, *, local, remotes, orphan, head='main'):
             True,
             [],
             True,
-            (['/repo/pub', 'pub'], ()),
+            (('/repo/pub', 'pub'), ()),
             id='local-branch-outranks-orphan',
         ),
         pytest.param(
@@ -82,7 +82,7 @@ def _decided(monkeypatch, *, local, remotes, orphan, head='main'):
             ['origin'],
             True,
             (
-                ['--track', '-b', 'pub', '/repo/pub', 'origin/pub'],
+                ('--track', '-b', 'pub', '/repo/pub', 'origin/pub'),
                 ("creating 'pub' tracking origin/pub",),
             ),
             id='remote-branch-outranks-orphan',

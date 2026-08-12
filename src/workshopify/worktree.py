@@ -98,7 +98,11 @@ def _worktrees(root: Path) -> dict[Path, str | None]:
     return result
 
 
-def _require_free(path: Path, worktrees: dict[Path, str | None], branch: str) -> None:
+def _require_free(
+    worktrees: dict[Path, str | None],
+    branch: str,
+    path: Path,
+) -> None:
     """Raise unless `path` is somewhere git may be handed for `branch`.
 
     Three ways it is taken, and each has its own remedy, so each is named:
@@ -124,12 +128,12 @@ def _require_free(path: Path, worktrees: dict[Path, str | None], branch: str) ->
         raise WorkshopifyError(f'error: {path} exists and is not empty')
 
 
-def _already_checked_out(
+def _holds_branch(
     worktrees: dict[Path, str | None],
     branch: str,
     path: Path,
-) -> Worktree | None:
-    """The prepared worktree already holding `branch`, or None if none does.
+) -> bool:
+    """Whether the worktree already holding `branch` is the one asked for.
 
     A branch can be checked out in only one worktree, so an existing one is
     either the whole answer or an obstacle, and which it is turns on nothing
@@ -137,6 +141,11 @@ def _already_checked_out(
     path would publish into a directory the user did not name; the alternative
     to reusing this one is git's own refusal, which knows nothing about
     `git worktree remove` being the remedy.
+
+    The judgment only, so that constructing the worktree stays in the one
+    place that constructs it -- what is already there and what was just added
+    are the same answer, and would be reported differently if two callers
+    built it.
     """
     for existing_path, existing_branch in worktrees.items():
         if existing_branch != branch:
@@ -147,8 +156,8 @@ def _already_checked_out(
                 f'{existing_path} (requested {path}). Reuse that path or '
                 f'remove it with `git worktree remove`.',
             )
-        return Worktree(path)
-    return None
+        return True
+    return False
 
 
 def _add_args(
@@ -157,7 +166,7 @@ def _add_args(
     path: Path,
     *,
     orphan: bool,
-) -> tuple[list[str], tuple[str, ...]]:
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """How to spell `git worktree add` here, and what to tell the user about it.
 
     The four ways a branch can come into being differ in exactly two things --
@@ -168,7 +177,7 @@ def _add_args(
     shapes checkable without a repo to check them against.
     """
     if _branch_exists(root, branch):
-        return [str(path), branch], ()
+        return (str(path), branch), ()
 
     # No local branch. Before inventing one, check whether it already exists on
     # a remote -- on a fresh clone that is the normal case. Asked before the
@@ -186,17 +195,17 @@ def _add_args(
     if remotes:
         remote = remotes[0]
         return (
-            ['--track', '-b', branch, str(path), f'{remote}/{branch}'],
+            ('--track', '-b', branch, str(path), f'{remote}/{branch}'),
             (f'creating {branch!r} tracking {remote}/{branch}',),
         )
     if orphan:
         # New orphan branch (no shared history) materialized in the worktree.
-        return ['--orphan', '-b', branch, str(path)], ()
+        return ('--orphan', '-b', branch, str(path)), ()
     # Genuinely new branch off the current HEAD. Say so -- if the user meant to
     # check out an existing remote branch, this is where it goes wrong.
     head = git(root, 'rev-parse', '--abbrev-ref', 'HEAD').strip()
     return (
-        ['-b', branch, str(path)],
+        ('-b', branch, str(path)),
         (f'note: no local or remote branch {branch!r}; creating it from {head}',),
     )
 
@@ -223,12 +232,11 @@ def prepare_worktree(
     git(root, 'worktree', 'prune')
 
     worktrees = _worktrees(root)
-    existing = _already_checked_out(worktrees, branch, path)
-    if existing is not None:
-        return existing
+    if _holds_branch(worktrees, branch, path):
+        return Worktree(path)
 
     # Nothing checked out `branch` yet. The target path must be free.
-    _require_free(path, worktrees, branch)
+    _require_free(worktrees, branch, path)
 
     args, notes = _add_args(root, branch, path, orphan=orphan)
     git(root, 'worktree', 'add', *args)
