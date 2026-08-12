@@ -41,6 +41,26 @@ def test_generate_into_a_directory(fixture_repo, monkeypatch, tmp_path):
     assert json.loads(nb.read_text())['cells']
 
 
+def test_generate_reports_each_written_file_exactly_once(
+    fixture_repo,
+    monkeypatch,
+    capsys,
+):
+    """One write, one line, in one vocabulary and one path format.
+
+    notebooks.generate used to announce each write itself, and the CLI then
+    reported the same paths again from the list it returns -- every file named
+    twice, once relative and once absolute.
+    """
+    monkeypatch.chdir(fixture_repo)
+    assert main(['generate']) == 0
+    assert capsys.readouterr().err.splitlines() == [
+        'wrote notebooks/completed/01_example.ipynb',
+        'wrote notebooks/01_example.ipynb',
+        'wrote notes/01_example.md',
+    ]
+
+
 def test_a_diagnosed_failure_prints_and_exits_one(fixture_repo, monkeypatch, capsys):
     monkeypatch.chdir(fixture_repo)
     assert main(['set', 'nope', 'x']) == 1

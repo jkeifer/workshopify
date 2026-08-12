@@ -44,7 +44,7 @@ def _generate(args: argparse.Namespace) -> int:
         args.output_dir or config.root,
     )
     for path in written:
-        print(f'wrote {path}', file=sys.stderr)
+        print(f'wrote {_rel(path, config.root)}', file=sys.stderr)
     return 0
 
 

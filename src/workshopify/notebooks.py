@@ -25,7 +25,6 @@ internally -- so the output is identical, without a rewritten temp config.
 from __future__ import annotations
 
 import json
-import sys
 
 from collections.abc import Mapping
 from dataclasses import replace
@@ -119,7 +118,6 @@ def _scrub(
 
     if not notes:
         _dump(processed, entry.output)
-        print(f'✓ {entry.input} → {entry.output}', file=sys.stderr)
         return None
 
     if entry.notes_file is None:
@@ -130,7 +128,6 @@ def _scrub(
     write_notes_file(notes, entry.notes_file)
 
     _dump(processed, entry.output)
-    print(f'✓ {entry.input} → {entry.output}', file=sys.stderr)
     return entry.notes_file
 
 

@@ -89,7 +89,6 @@ ignore = [
 # scheduled for the CLI/API pass -- not something to paper over permanently.
 'src/workshopify/build.py' = ['T201', 'S607']
 'src/workshopify/cli.py' = ['T201']
-'src/workshopify/notebooks.py' = ['T201']
 'src/workshopify/worktree.py' = ['T201']
 # `git` is invoked by name so the user's git (version, config, credential
 # helpers) is the one that runs; resolving an absolute path would defeat that.
