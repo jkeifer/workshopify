@@ -139,6 +139,29 @@ class Config:
         except ValueError:
             return str(path)
 
+    def rebase(self, path: Path, dest: Path, what: str) -> Path:
+        """`path`, re-rooted under `dest`. Outside the root is a config error.
+
+        Every generated tree is the repo's own layout written somewhere else,
+        so this is the one operation that says where a repo path lands there.
+        Lives beside `display_path` because both are the root answering a
+        question about a path, and the root is what this object owns.
+
+        Joining an absolute path discards `dest` entirely, so the subtraction
+        against the root comes first -- without it a build writes over the
+        source tree and reports success. Both sides are resolved because one
+        directory has more than one spelling: on macOS a path under /var and
+        the same path under /private/var name the same place. A path outside
+        the root has no spelling under `dest` at all, which is a config error
+        worth naming rather than `relative_to`'s bare ValueError.
+        """
+        try:
+            return dest / path.resolve().relative_to(self.root.resolve())
+        except ValueError as e:
+            raise WorkshopifyError(
+                f'error: {what} {path} is outside the repo root {self.root}',
+            ) from e
+
     @classmethod
     def _of(cls, root: Path, table: _Table) -> Self:
         """A config from an already-parsed table and the resolved root it came from."""
