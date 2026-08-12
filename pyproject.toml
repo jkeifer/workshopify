@@ -88,7 +88,7 @@ ignore = [
 # it is what makes that invariant enforced rather than merely documented.
 'src/workshopify/cli.py' = ['T201']
 # `uv` is invoked by name so the lock is derived with the user's own uv.
-'src/workshopify/build.py' = ['S607']
+'src/workshopify/deps.py' = ['S607']
 # `git` is invoked by name so the user's git (version, config, credential
 # helpers) is the one that runs; resolving an absolute path would defeat that.
 # The argument lists are constructed here, never taken from user input.
