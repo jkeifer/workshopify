@@ -71,7 +71,7 @@ def test_apply_refuses_a_missing_asset_source_before_writing(fixture_repo):
 def test_publish_strips_markers_and_generators(fixture_repo):
     _config, ctx = _setup(fixture_repo)
     src = (fixture_repo / 'src/01_example.py').read_text()
-    stripped = render.publish(src, ctx.namespace, 'src/01_example.py')
+    stripped = render.publish(ctx, src, 'src/01_example.py')
     assert '[[[' not in stripped
     assert 'word = "hello"' in stripped
     assert '# HELLO' in stripped
@@ -90,7 +90,7 @@ def test_publish_rejects_a_generator_that_breaks_cell_structure(fixture_repo):
         '# <!--[[[end]]]-->\n'
     )
     with pytest.raises(render.PublishError):
-        render.publish(bad, ctx.namespace, '<bad>')
+        render.publish(ctx, bad, '<bad>')
 
 
 def test_no_files_matched_diagnoses(fixture_repo):

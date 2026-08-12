@@ -10,12 +10,18 @@ the same machinery serves any repo that templates its sources this way.
     [tool.workshopify.render]
     files = ["src/*.py"]
 
-Three operations, each taking the resolved Config and loaded Context:
+Three operations, each taking the loaded Context -- never a raw namespace --
+so no caller has to reach inside it:
 
-    apply(config, ctx)      re-render every configured file and asset in place
-    check(config, ctx)      error strings if any file or asset is stale
-    publish(text, ns)       the text with markers and generators stripped,
-                            validated as a sound py:percent document
+    apply(config, ctx)          re-render every configured file and asset in
+                                place
+    check(config, ctx)          error strings if any file or asset is stale
+    publish(ctx, text, fname)   the text with markers and generators stripped,
+                                validated as a sound py:percent document
+
+apply and check work from the Config, over every file it names; publish works
+over the text of one source file, so it takes that text and the name to
+report it by instead.
 
 Failures raise WorkshopifyError/PublishError; deciding to exit is the CLI's
 job, never this module's.
@@ -75,10 +81,10 @@ def _files(config: Config) -> list[Path]:
     return files
 
 
-def _rendered(config: Config, namespace: dict) -> dict[Path, str]:
+def _rendered(config: Config, ctx: Context) -> dict[Path, str]:
     """Every configured file re-rendered, in memory, none written."""
     return {
-        path: _run(path.read_text(), namespace, str(path), delete_code=False)
+        path: _run(path.read_text(), ctx.namespace, str(path), delete_code=False)
         for path in _files(config)
     }
 
@@ -103,7 +109,7 @@ def apply(config: Config, ctx: Context) -> list[Path]:
     verified to exist first -- so a failing generator or a missing screenshot
     cannot leave the tree half-rendered.
     """
-    rendered = _rendered(config, ctx.namespace)
+    rendered = _rendered(config, ctx)
     missing = [str(s) for s in sorted(ctx.assets.values()) if not s.is_file()]
     if missing:
         raise WorkshopifyError(
@@ -125,7 +131,7 @@ def apply(config: Config, ctx: Context) -> list[Path]:
 def check(config: Config, ctx: Context) -> list[str]:
     """Error strings for every stale rendered file and every wrong asset."""
     errors = []
-    for path, fresh in _rendered(config, ctx.namespace).items():
+    for path, fresh in _rendered(config, ctx).items():
         current = path.read_text()
         if current == fresh:
             continue
@@ -142,7 +148,7 @@ def check(config: Config, ctx: Context) -> list[str]:
     return errors + _asset_errors(config, ctx)
 
 
-def publish(text: str, namespace: dict, fname: str = '<src>') -> str:
+def publish(ctx: Context, text: str, fname: str = '<src>') -> str:
     """Marker- and generator-free text, validated before it can ship.
 
     cog only checks that generators ran; it does not know notebook cells
@@ -151,7 +157,7 @@ def publish(text: str, namespace: dict, fname: str = '<src>') -> str:
     so the stripped text must parse to the same cell shape as its source
     and survive a jupytext round trip byte-identically.
     """
-    stripped = _run(text, namespace, fname, delete_code=True)
+    stripped = _run(text, ctx.namespace, fname, delete_code=True)
     if MARKERS[0] in stripped or MARKERS[2] in stripped:
         raise PublishError(f'error: {fname}: marker residue survived the strip')
     before = jupytext.reads(text, fmt='py:percent')

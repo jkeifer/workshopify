@@ -81,7 +81,7 @@ def _render_completed(config: Config, ctx: Context, dest: Path) -> Notebook:
     if not src_py.exists():
         raise WorkshopifyError(f'error: missing source file {src_py}')
 
-    published = publish(src_py.read_text(), ctx.namespace, str(src_py))
+    published = publish(ctx, src_py.read_text(), str(src_py))
     # The [tool.jupytext] config must reach the API calls explicitly; only the
     # CLI discovers it. Without it the cell metadata filter that keeps
     # `raises-exception` tags falls back to defaults.
