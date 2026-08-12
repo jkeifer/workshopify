@@ -1,12 +1,115 @@
 import shutil
 import subprocess
 
+from pathlib import Path
+
 import pytest
 
 from conftest import commit_all, git_repo
 
+from workshopify import worktree
 from workshopify.errors import WorkshopifyError
 from workshopify.worktree import clean, is_dirty, prepare_worktree
+
+# --- _add_args -------------------------------------------------------------
+
+ROOT = Path('/repo')
+PATH = Path('/repo/pub')
+
+
+def _decided(monkeypatch, *, local, remotes, orphan, head='main'):
+    """`_add_args`'s verdict, with the questions it asks git answered here.
+
+    It decides without mutating, which is what lets all four shapes be checked
+    against no repo at all -- the argv is the whole of what distinguishes
+    them, and end-to-end tests can only observe what git then did with it.
+    """
+    monkeypatch.setattr(worktree, '_branch_exists', lambda root, branch: local)
+    monkeypatch.setattr(worktree, '_remotes_with_branch', lambda root, branch: remotes)
+    monkeypatch.setattr(worktree, 'git', lambda cwd, *args: f'{head}\n')
+    return worktree._add_args(ROOT, 'pub', PATH, orphan=orphan)
+
+
+@pytest.mark.parametrize(
+    ('local', 'remotes', 'orphan', 'expected'),
+    [
+        pytest.param(
+            True,
+            [],
+            False,
+            (['/repo/pub', 'pub'], ()),
+            id='local-branch',
+        ),
+        pytest.param(
+            False,
+            ['origin'],
+            False,
+            (
+                ['--track', '-b', 'pub', '/repo/pub', 'origin/pub'],
+                ("creating 'pub' tracking origin/pub",),
+            ),
+            id='one-remote',
+        ),
+        pytest.param(
+            False,
+            [],
+            True,
+            (['--orphan', '-b', 'pub', '/repo/pub'], ()),
+            id='orphan',
+        ),
+        pytest.param(
+            False,
+            [],
+            False,
+            (
+                ['-b', 'pub', '/repo/pub'],
+                ("note: no local or remote branch 'pub'; creating it from main",),
+            ),
+            id='new-from-head',
+        ),
+        # An existing branch is checked out, never re-created, so --orphan is
+        # not a way to discard one: both precedences are behaviour, not an
+        # accident of the order the cases happen to be written in.
+        pytest.param(
+            True,
+            [],
+            True,
+            (['/repo/pub', 'pub'], ()),
+            id='local-branch-outranks-orphan',
+        ),
+        pytest.param(
+            False,
+            ['origin'],
+            True,
+            (
+                ['--track', '-b', 'pub', '/repo/pub', 'origin/pub'],
+                ("creating 'pub' tracking origin/pub",),
+            ),
+            id='remote-branch-outranks-orphan',
+        ),
+    ],
+)
+def test_add_args_decides_the_four_shapes(
+    monkeypatch,
+    local,
+    remotes,
+    orphan,
+    expected,
+):
+    decided = _decided(monkeypatch, local=local, remotes=remotes, orphan=orphan)
+    assert decided == expected
+
+
+def test_an_ambiguous_remote_is_refused_even_when_orphan_was_asked_for(monkeypatch):
+    """--orphan does not route around the ambiguity; it is decided first.
+
+    Orphaning would answer the request, and answer it by discarding the
+    history on both remotes -- silently, since an orphan branch failing to
+    contain anything is what an orphan branch is.
+    """
+    with pytest.raises(WorkshopifyError, match='origin, other'):
+        _decided(monkeypatch, local=False, remotes=['origin', 'other'], orphan=True)
+
 
 # --- prepare_worktree ------------------------------------------------------
 

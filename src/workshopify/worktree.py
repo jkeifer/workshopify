@@ -124,43 +124,57 @@ def _require_free(path: Path, worktrees: dict[Path, str | None], branch: str) ->
         raise WorkshopifyError(f'error: {path} exists and is not empty')
 
 
-def prepare_worktree(
+def _already_checked_out(
+    worktrees: dict[Path, str | None],
+    branch: str,
+    path: Path,
+) -> Worktree | None:
+    """The prepared worktree already holding `branch`, or None if none does.
+
+    A branch can be checked out in only one worktree, so an existing one is
+    either the whole answer or an obstacle, and which it is turns on nothing
+    but whether it sits where the caller asked. Reusing a worktree at another
+    path would publish into a directory the user did not name; the alternative
+    to reusing this one is git's own refusal, which knows nothing about
+    `git worktree remove` being the remedy.
+    """
+    for existing_path, existing_branch in worktrees.items():
+        if existing_branch != branch:
+            continue
+        if existing_path != path:
+            raise WorkshopifyError(
+                f'error: branch {branch!r} is already checked out at '
+                f'{existing_path} (requested {path}). Reuse that path or '
+                f'remove it with `git worktree remove`.',
+            )
+        return Worktree(path)
+    return None
+
+
+def _add_args(
     root: Path,
     branch: str,
     path: Path,
     *,
     orphan: bool,
-) -> Worktree:
-    path = path.resolve()
+) -> tuple[list[str], tuple[str, ...]]:
+    """How to spell `git worktree add` here, and what to tell the user about it.
 
-    # Prune stale registrations (e.g. a worktree dir that was deleted) so we
-    # don't trip over "branch already used by worktree" for a gone location.
-    git(root, 'worktree', 'prune')
-
-    worktrees = _worktrees(root)
-
-    # A branch can only be checked out in one worktree. If it already is, reuse
-    # that -- but insist it matches the requested path to avoid surprises.
-    for existing_path, existing_branch in worktrees.items():
-        if existing_branch == branch:
-            if existing_path != path:
-                raise WorkshopifyError(
-                    f'error: branch {branch!r} is already checked out at '
-                    f'{existing_path} (requested {path}). Reuse that path or '
-                    f'remove it with `git worktree remove`.',
-                )
-            return Worktree(path)
-
-    # Nothing checked out `branch` yet. The target path must be free.
-    _require_free(path, worktrees, branch)
-
+    The four ways a branch can come into being differ in exactly two things --
+    the argv tail and the advisory note -- so they are decided together, in
+    one place, and run in another. It asks git several questions and answers
+    none of them destructively: every effect prepare_worktree has is the one
+    call it makes with what this returns, which is also what makes the four
+    shapes checkable without a repo to check them against.
+    """
     if _branch_exists(root, branch):
-        git(root, 'worktree', 'add', str(path), branch)
-        return Worktree(path)
+        return [str(path), branch], ()
 
     # No local branch. Before inventing one, check whether it already exists on
-    # a remote -- on a fresh clone that is the normal case.
-    notes: tuple[str, ...] = ()
+    # a remote -- on a fresh clone that is the normal case. Asked before the
+    # orphan case, not after: --orphan against a branch some remote already has
+    # is a request whose two halves contradict each other, and answering it by
+    # orphaning discards the history the user would then push over.
     remotes = _remotes_with_branch(root, branch)
     if len(remotes) > 1:
         raise WorkshopifyError(
@@ -171,27 +185,51 @@ def prepare_worktree(
         )
     if remotes:
         remote = remotes[0]
-        notes = (f'creating {branch!r} tracking {remote}/{branch}',)
-        git(
-            root,
-            'worktree',
-            'add',
-            '--track',
-            '-b',
-            branch,
-            str(path),
-            f'{remote}/{branch}',
+        return (
+            ['--track', '-b', branch, str(path), f'{remote}/{branch}'],
+            (f'creating {branch!r} tracking {remote}/{branch}',),
         )
-    elif orphan:
+    if orphan:
         # New orphan branch (no shared history) materialized in the worktree.
-        git(root, 'worktree', 'add', '--orphan', '-b', branch, str(path))
-    else:
-        # Genuinely new branch off the current HEAD. Say so -- if the user meant
-        # to check out an existing remote branch, this is where it goes wrong.
-        head = git(root, 'rev-parse', '--abbrev-ref', 'HEAD').strip()
-        notes = (
-            f'note: no local or remote branch {branch!r}; creating it from {head}',
-        )
-        git(root, 'worktree', 'add', '-b', branch, str(path))
+        return ['--orphan', '-b', branch, str(path)], ()
+    # Genuinely new branch off the current HEAD. Say so -- if the user meant to
+    # check out an existing remote branch, this is where it goes wrong.
+    head = git(root, 'rev-parse', '--abbrev-ref', 'HEAD').strip()
+    return (
+        ['-b', branch, str(path)],
+        (f'note: no local or remote branch {branch!r}; creating it from {head}',),
+    )
 
+
+def prepare_worktree(
+    root: Path,
+    branch: str,
+    path: Path,
+    *,
+    orphan: bool,
+) -> Worktree:
+    """`branch`, checked out at `path`, by whichever route that takes.
+
+    Reusing one already checked out there is the only case that is not an
+    add; every other is the same add, differing only in the argv `_add_args`
+    returns. One effect, then, rather than one per case -- so the question of
+    which worktree a build publishes into is answered in a function that
+    cannot create one, and creating one is a line with nothing to decide.
+    """
+    path = path.resolve()
+
+    # Prune stale registrations (e.g. a worktree dir that was deleted) so we
+    # don't trip over "branch already used by worktree" for a gone location.
+    git(root, 'worktree', 'prune')
+
+    worktrees = _worktrees(root)
+    existing = _already_checked_out(worktrees, branch, path)
+    if existing is not None:
+        return existing
+
+    # Nothing checked out `branch` yet. The target path must be free.
+    _require_free(path, worktrees, branch)
+
+    args, notes = _add_args(root, branch, path, orphan=orphan)
+    git(root, 'worktree', 'add', *args)
     return Worktree(path, notes)
