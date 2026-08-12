@@ -115,7 +115,12 @@ def _set(args: argparse.Namespace) -> int:
 def _worktree(args: argparse.Namespace) -> int:
     config = Config.discover()
     path = args.path or config.root / args.branch
-    prepared = worktree.prepare_worktree(config.root, args.branch, path, args.orphan)
+    prepared = worktree.prepare_worktree(
+        config.root,
+        args.branch,
+        path,
+        orphan=args.orphan,
+    )
     for note in prepared.notes:
         print(note, file=sys.stderr)
     # The path is the command's result, so it goes to stdout where it can be

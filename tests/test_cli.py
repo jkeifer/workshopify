@@ -82,6 +82,26 @@ def test_worktree_subcommand(fixture_repo, monkeypatch, capsys):
     assert 'creating it from' in captured.err
 
 
+def test_worktree_subcommand_passes_orphan_through(fixture_repo, monkeypatch, capsys):
+    """--orphan must reach prepare_worktree: the branch gets no history."""
+    from conftest import git_repo
+
+    git_repo(fixture_repo)
+    subprocess.run(['git', 'add', '-A'], cwd=fixture_repo, check=True)
+    subprocess.run(['git', 'commit', '-qm', 'x'], cwd=fixture_repo, check=True)
+    monkeypatch.chdir(fixture_repo)
+    assert main(['worktree', 'pages', '--orphan']) == 0
+    capsys.readouterr()
+    result = subprocess.run(
+        ['git', 'rev-parse', 'HEAD'],
+        cwd=fixture_repo / 'pages',
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0, 'an orphan worktree starts with no commits'
+
+
 def _committed_repo(fixture_repo):
     from conftest import git_repo
 

@@ -87,7 +87,13 @@ def _worktrees(root: Path) -> dict[Path, str]:
     return result
 
 
-def prepare_worktree(root: Path, branch: str, path: Path, orphan: bool) -> Worktree:
+def prepare_worktree(
+    root: Path,
+    branch: str,
+    path: Path,
+    *,
+    orphan: bool,
+) -> Worktree:
     path = path.resolve()
 
     # Prune stale registrations (e.g. a worktree dir that was deleted) so we
