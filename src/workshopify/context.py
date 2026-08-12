@@ -31,11 +31,21 @@ class Context:
     assets: dict[Path, Path]
 
 
-def load(config: Config) -> Context:
-    path = (config.root / config.context).resolve()
-    if not path.is_file():
-        raise WorkshopifyError(f'error: context module {path} does not exist')
+def _executed(config: Config, path: Path) -> dict[str, Any]:
+    """The module at `path` run, and the names it left behind.
 
+    `params` and `__file__` are pre-bound, and the module's own directory
+    goes on sys.path for the duration so a sibling import resolves the way it
+    would if the module were run directly. Removed in a `finally` because the
+    entry outlives a failed exec otherwise, and the next repo loaded in the
+    same process would import this one's siblings.
+
+    A `WorkshopifyError` from the module is the author diagnosing something
+    themselves -- a missing screenshot, a param that names nowhere -- so it
+    passes through as written. Anything else is a crash in code this package
+    is executing on the author's behalf, which is worth its repr and the name
+    of the file to look in.
+    """
     namespace: dict[str, Any] = {'__file__': str(path), 'params': dict(config.params)}
     directory = str(path.parent)
     sys.path.insert(0, directory)
@@ -50,7 +60,17 @@ def load(config: Config) -> Context:
     finally:
         with suppress(ValueError):
             sys.path.remove(directory)
+    return namespace
 
+
+def _assets(config: Config, path: Path, namespace: dict[str, Any]) -> dict[Path, Path]:
+    """The declared ASSETS, checked and resolved to absolute target -> source.
+
+    Everything here is the workshop author's typing, so every way of getting
+    it wrong is diagnosed against the spelling they used and the file they
+    used it in -- which is the whole reason this is validated at declaration
+    rather than where a copy later fails.
+    """
     declared = namespace.get('ASSETS', {})
     if not isinstance(declared, dict):
         raise WorkshopifyError(
@@ -72,16 +92,25 @@ def load(config: Config) -> Context:
         # A target is where the file lands in the published tree, and there is
         # no such place outside the repo: build would refuse it, so a repo
         # declaring one renders clean forever and can never be published.
-        # Rebasing a repo path onto the root is the identity, which makes this
-        # `Config.rebase` asked purely for its judgment.
-        config.rebase(resolved, config.root, f'{path}: ASSETS target')
+        # `within` both refuses that and hands back the repo's own spelling of
+        # the target, which is what the duplicate below has to be reported by:
+        # the two declarations differ precisely in how they spell it.
+        relative = config.within(resolved, f'{path}: ASSETS target')
         if resolved in assets:
             raise WorkshopifyError(
-                f'error: {path}: ASSETS declares '
-                f'{config.display_path(resolved)} twice, as '
+                f'error: {path}: ASSETS declares {relative} twice, as '
                 f'{spellings[resolved]!r} and {str(target)!r} -- one target has one '
                 f'source, and a dict keeps only the last of them',
             )
         spellings[resolved] = str(target)
         assets[resolved] = (config.root / source).resolve()
-    return Context(namespace=namespace, assets=assets)
+    return assets
+
+
+def load(config: Config) -> Context:
+    """The context module, executed, with what it declared alongside it."""
+    path = (config.root / config.context).resolve()
+    if not path.is_file():
+        raise WorkshopifyError(f'error: context module {path} does not exist')
+    namespace = _executed(config, path)
+    return Context(namespace=namespace, assets=_assets(config, path, namespace))

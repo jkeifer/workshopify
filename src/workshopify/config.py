@@ -187,6 +187,31 @@ class Config:
         except ValueError:
             return str(path)
 
+    def within(self, path: Path, what: str) -> Path:
+        """`path` as this repo spells it: relative to the root, or a refusal.
+
+        The judgment, separate from any use of it, because two callers want
+        different things from the same verdict: `rebase` wants somewhere to
+        put the answer, while `context` wants only to know that a declared
+        asset target is a place this repo has -- and asking a mapping function
+        for its judgment and dropping what it mapped is how that was said
+        before there was a name for it.
+
+        Both sides are resolved because one directory has more than one
+        spelling: on macOS a path under /var and the same path under
+        /private/var name the same place, and comparing them unresolved
+        refuses a path that is genuinely inside. A path that really is outside
+        has no spelling relative to the root at all, which is a config error
+        worth naming -- `what` is how the caller names the kind of path it
+        handed over -- rather than `relative_to`'s bare ValueError.
+        """
+        try:
+            return path.resolve().relative_to(self.root.resolve())
+        except ValueError as e:
+            raise WorkshopifyError(
+                f'error: {what} {path} is outside the repo root {self.root}',
+            ) from e
+
     def rebase(self, path: Path, dest: Path, what: str) -> Path:
         """`path`, re-rooted under `dest`. Outside the root is a config error.
 
@@ -195,20 +220,11 @@ class Config:
         Lives beside `display_path` because both are the root answering a
         question about a path, and the root is what this object owns.
 
-        Joining an absolute path discards `dest` entirely, so the subtraction
-        against the root comes first -- without it a build writes over the
-        source tree and reports success. Both sides are resolved because one
-        directory has more than one spelling: on macOS a path under /var and
-        the same path under /private/var name the same place. A path outside
-        the root has no spelling under `dest` at all, which is a config error
-        worth naming rather than `relative_to`'s bare ValueError.
+        What is joined is `within`'s answer and never the path itself:
+        joining an absolute path discards `dest` entirely, so without that
+        subtraction a build writes over the source tree and reports success.
         """
-        try:
-            return dest / path.resolve().relative_to(self.root.resolve())
-        except ValueError as e:
-            raise WorkshopifyError(
-                f'error: {what} {path} is outside the repo root {self.root}',
-            ) from e
+        return dest / self.within(path, what)
 
     @classmethod
     def _of(cls, root: Path, table: _Table) -> Self:

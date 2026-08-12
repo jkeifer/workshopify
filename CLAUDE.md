@@ -9,7 +9,7 @@ The package is a src-layout library with one command-line surface.
 
 | Module | Responsibility |
 | --- | --- |
-| `config.py` | The declarative half: parses `[tool.workshopify]` into frozen dataclasses, each subtable spelled once by the dataclass that receives it. Names the context module but never executes it. Owns the repo root, so it also owns the paths derived from it: `pyproject`, `display_path` for naming a file to a human, and `rebase` for placing a repo path in a generated tree. |
+| `config.py` | The declarative half: parses `[tool.workshopify]` into frozen dataclasses, each subtable spelled once by the dataclass that receives it. Names the context module but never executes it. Owns the repo root, so it also owns the paths derived from it: `pyproject`, `display_path` for naming a file to a human, `within` for judging that a path is one the repo has and spelling it the repo's way, and `rebase` for placing that spelling in a generated tree. |
 | `context.py` | Loads and executes the workshop's context module, yielding the namespace the cog generators run in and the declared `ASSETS` map. |
 | `render.py` | The cog render engine: rendering values in place, checking they are current, and stripping the templating for publication. |
 | `assets.py` | The other half of `render` and `check`: the files `ASSETS` declares as carried verbatim rather than rendered. Decides which are missing or divergent -- and refuses a vanished source -- separately from copying them, so `render.apply` can take both decisions before it writes anything. |
