@@ -18,18 +18,27 @@ def _repo_with_commit(tmp_path: Path, name: str = 'origin_repo') -> Path:
     return repo
 
 
-def test_creates_a_new_branch_from_head(tmp_path, capsys):
+def test_creates_a_new_branch_from_head(tmp_path):
     repo = _repo_with_commit(tmp_path)
     wt = prepare_worktree(repo, 'pub', repo / 'pub', orphan=False)
-    assert wt == (repo / 'pub').resolve()
-    assert (wt / 'a.txt').is_file()
-    assert 'creating it from' in capsys.readouterr().err
+    assert wt.path == (repo / 'pub').resolve()
+    assert (wt.path / 'a.txt').is_file()
+    # Advisory, not diagnostic: this is where a mistyped branch goes wrong.
+    assert any('creating it from' in note for note in wt.notes)
+
+
+def test_a_prepared_worktree_that_needed_no_explaining_says_nothing(tmp_path):
+    repo = _repo_with_commit(tmp_path)
+    subprocess.run(['git', 'branch', 'pub'], cwd=repo, check=True)
+    assert prepare_worktree(repo, 'pub', repo / 'pub', orphan=False).notes == ()
 
 
 def test_reuses_an_existing_worktree_at_the_same_path(tmp_path):
     repo = _repo_with_commit(tmp_path)
     first = prepare_worktree(repo, 'pub', repo / 'pub', orphan=False)
-    assert prepare_worktree(repo, 'pub', repo / 'pub', orphan=False) == first
+    again = prepare_worktree(repo, 'pub', repo / 'pub', orphan=False)
+    assert again.path == first.path
+    assert again.notes == (), 'reusing a worktree needs no explanation'
 
 
 def test_refuses_the_branch_checked_out_elsewhere(tmp_path):
@@ -54,7 +63,7 @@ def test_refuses_a_nonempty_directory(tmp_path):
         prepare_worktree(repo, 'pub', repo / 'occupied', orphan=False)
 
 
-def test_tracks_a_remote_branch_on_a_fresh_clone(tmp_path, capsys):
+def test_tracks_a_remote_branch_on_a_fresh_clone(tmp_path):
     origin = _repo_with_commit(tmp_path)
     subprocess.run(
         ['git', 'branch', 'pub'],
@@ -69,12 +78,13 @@ def test_tracks_a_remote_branch_on_a_fresh_clone(tmp_path, capsys):
     wt = prepare_worktree(clone, 'pub', clone / 'pub', orphan=False)
     head = subprocess.run(
         ['git', 'rev-parse', '--abbrev-ref', 'pub@{upstream}'],
-        cwd=wt,
+        cwd=wt.path,
         capture_output=True,
         text=True,
         check=True,
     ).stdout.strip()
     assert head == 'origin/pub'
+    assert any('tracking origin/pub' in note for note in wt.notes)
 
 
 def test_orphan_branch_has_no_history(tmp_path):
@@ -82,7 +92,7 @@ def test_orphan_branch_has_no_history(tmp_path):
     wt = prepare_worktree(repo, 'pages', repo / 'pages', orphan=True)
     result = subprocess.run(
         ['git', 'rev-parse', 'HEAD'],
-        cwd=wt,
+        cwd=wt.path,
         capture_output=True,
         text=True,
         check=False,
@@ -95,6 +105,6 @@ def test_prunes_a_stale_registration(tmp_path):
 
     repo = _repo_with_commit(tmp_path)
     wt = prepare_worktree(repo, 'pub', repo / 'pub', orphan=False)
-    shutil.rmtree(wt)
+    shutil.rmtree(wt.path)
     # The stale registration would otherwise block re-adding the branch.
-    assert prepare_worktree(repo, 'pub', repo / 'pub', orphan=False) == wt
+    assert prepare_worktree(repo, 'pub', repo / 'pub', orphan=False).path == wt.path

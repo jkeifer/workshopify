@@ -9,12 +9,25 @@ yourself.
 
 from __future__ import annotations
 
-import sys
-
+from dataclasses import dataclass
 from pathlib import Path
 
 from workshopify.errors import WorkshopifyError
 from workshopify.git import git, succeeds
+
+
+@dataclass(frozen=True)
+class Worktree:
+    """A prepared worktree, and how it came to be.
+
+    `notes` is advisory, not diagnostic: nothing here failed, but inventing a
+    branch is the kind of thing a user wants told. Returning the lines rather
+    than printing them keeps the decision of whether and where they are shown
+    with the CLI. Empty whenever the worktree needed no explaining.
+    """
+
+    path: Path
+    notes: tuple[str, ...] = ()
 
 
 def _branch_exists(root: Path, branch: str) -> bool:
@@ -54,7 +67,7 @@ def _worktrees(root: Path) -> dict[Path, str]:
     return result
 
 
-def prepare_worktree(root: Path, branch: str, path: Path, orphan: bool) -> Path:
+def prepare_worktree(root: Path, branch: str, path: Path, orphan: bool) -> Worktree:
     path = path.resolve()
 
     # Prune stale registrations (e.g. a worktree dir that was deleted) so we
@@ -73,7 +86,7 @@ def prepare_worktree(root: Path, branch: str, path: Path, orphan: bool) -> Path:
                     f'{existing_path} (requested {path}). Reuse that path or '
                     f'remove it with `git worktree remove`.',
                 )
-            return path
+            return Worktree(path)
 
     # Nothing checked out `branch` yet. The target path must be free.
     if path in worktrees:
@@ -86,10 +99,11 @@ def prepare_worktree(root: Path, branch: str, path: Path, orphan: bool) -> Path:
 
     if _branch_exists(root, branch):
         git(root, 'worktree', 'add', str(path), branch)
-        return path
+        return Worktree(path)
 
     # No local branch. Before inventing one, check whether it already exists on
     # a remote -- on a fresh clone that is the normal case.
+    notes: tuple[str, ...] = ()
     remotes = _remotes_with_branch(root, branch)
     if len(remotes) > 1:
         raise WorkshopifyError(
@@ -100,7 +114,7 @@ def prepare_worktree(root: Path, branch: str, path: Path, orphan: bool) -> Path:
         )
     if remotes:
         remote = remotes[0]
-        print(f'creating {branch!r} tracking {remote}/{branch}', file=sys.stderr)
+        notes = (f'creating {branch!r} tracking {remote}/{branch}',)
         git(
             root,
             'worktree',
@@ -118,10 +132,9 @@ def prepare_worktree(root: Path, branch: str, path: Path, orphan: bool) -> Path:
         # Genuinely new branch off the current HEAD. Say so -- if the user meant
         # to check out an existing remote branch, this is where it goes wrong.
         head = git(root, 'rev-parse', '--abbrev-ref', 'HEAD').strip()
-        print(
+        notes = (
             f'note: no local or remote branch {branch!r}; creating it from {head}',
-            file=sys.stderr,
         )
         git(root, 'worktree', 'add', '-b', branch, str(path))
 
-    return path
+    return Worktree(path, notes)

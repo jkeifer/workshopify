@@ -76,6 +76,10 @@ def test_worktree_subcommand(fixture_repo, monkeypatch, capsys):
     monkeypatch.chdir(fixture_repo)
     assert main(['worktree', 'pub']) == 0
     assert (fixture_repo / 'pub' / '.git').exists()
+    captured = capsys.readouterr()
+    assert captured.out.strip() == str((fixture_repo / 'pub').resolve())
+    # The advisory note prepare_worktree produced must still reach the user.
+    assert 'creating it from' in captured.err
 
 
 def test_build_publishes_into_the_branch_worktree(fixture_repo, monkeypatch):

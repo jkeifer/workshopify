@@ -50,19 +50,22 @@ def _generate(args: argparse.Namespace) -> int:
 
 def _build(args: argparse.Namespace) -> int:
     config = Config.discover()
-    target = worktree.prepare_worktree(
+    prepared = worktree.prepare_worktree(
         config.root,
         config.build.branch,
         config.root / config.build.branch,
         orphan=False,
     )
-    return build.publish_into(
+    for note in prepared.notes:
+        print(note, file=sys.stderr)
+    build.publish_into(
         config,
         context.load(config),
-        target,
+        prepared.path,
         clean_first=args.clean,
         overwrite_dirty=args.overwrite_dirty,
     )
+    return 0
 
 
 def _set(args: argparse.Namespace) -> int:
@@ -77,7 +80,12 @@ def _set(args: argparse.Namespace) -> int:
 def _worktree(args: argparse.Namespace) -> int:
     config = Config.discover()
     path = args.path or config.root / args.branch
-    print(worktree.prepare_worktree(config.root, args.branch, path, args.orphan))
+    prepared = worktree.prepare_worktree(config.root, args.branch, path, args.orphan)
+    for note in prepared.notes:
+        print(note, file=sys.stderr)
+    # The path is the command's result, so it goes to stdout where it can be
+    # piped; the notes above are commentary and stay on stderr.
+    print(prepared.path)
     return 0
 
 
