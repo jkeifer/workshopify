@@ -130,7 +130,14 @@ def _worktree(args: argparse.Namespace) -> int:
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog='workshopify', description=__doc__)
+    parser = argparse.ArgumentParser(
+        prog='workshopify',
+        description=(
+            'Build a template-rendered, notebook-based workshop repository. '
+            'The repo declares everything mechanical in [tool.workshopify] '
+            'tables in its pyproject.toml; these commands do the rest.'
+        ),
+    )
     sub = parser.add_subparsers(dest='command', required=True)
 
     sub.add_parser(
