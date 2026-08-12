@@ -3,36 +3,101 @@
 Everything mechanical the tool does is driven from here; the one procedural
 piece -- the context module -- is only *named* here and executed by
 workshopify.context.
+
+The frozen dataclasses below hold every default there is. `load` passes only
+the keys pyproject.toml actually gave, so an absent key falls through to its
+field default rather than to a literal restated at the call site.
 """
 
 from __future__ import annotations
 
 import tomllib
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any, Self
 
 from workshopify.errors import WorkshopifyError
 
+type _Table = dict[str, Any]
 
-def _strings(
-    table: dict,
-    key: str,
-    where: str,
-    default: tuple[str, ...],
-) -> tuple[str, ...]:
+
+def _where(*path: str) -> str:
+    """A config table, named as pyproject.toml spells it."""
+    return f'[{".".join(("tool", "workshopify", *path))}]'
+
+
+def _toml_key(name: str) -> str:
+    """A dataclass field, named as pyproject.toml spells it.
+
+    TOML keys are kebab-case and dataclass fields are snake_case; this is the
+    only place the two spellings meet.
+    """
+    return name.replace('_', '-')
+
+
+def _checked(table: _Table, known: set[str], where: str) -> _Table:
+    """`table` keyed by field name, rejecting any key nothing declares.
+
+    An unrecognized key is a typo, and a typo'd key configures nothing: a
+    workshop that asked for `includes = [...]` would build without the file it
+    named and say nothing about it. So say it here, while the name the author
+    wrote is still in hand.
+    """
+    names = {_toml_key(name): name for name in known}
+    checked = {}
+    for key, value in table.items():
+        if key not in names:
+            raise WorkshopifyError(f'error: unknown key {key!r} in {where}')
+        checked[names[key]] = value
+    return checked
+
+
+def _given(**values: Any) -> _Table:
+    """The keywords a value was actually given for.
+
+    What pyproject.toml leaves out is left out of the constructor call, so the
+    dataclass default -- the only default -- applies.
+    """
+    return {name: value for name, value in values.items() if value is not None}
+
+
+def _section(parent: _Table, name: str, target: type[Any]) -> tuple[_Table, str]:
+    """A subtable checked against `target`, with its name for the reads to come."""
+    where = _where(name)
+    table = parent.get(name, {})
+    if not isinstance(table, dict):
+        raise WorkshopifyError(f'error: {where} must be a table')
+    return _checked(table, {f.name for f in fields(target)}, where), where
+
+
+def _string(table: _Table, key: str, where: str) -> str | None:
+    value = table.get(key)
+    if value is not None and not isinstance(value, str):
+        raise WorkshopifyError(f'error: {where} {_toml_key(key)} must be a string')
+    return value
+
+
+def _strings(table: _Table, key: str, where: str) -> tuple[str, ...] | None:
     value = table.get(key)
     if value is None:
-        return default
+        return None
     if not isinstance(value, list) or not all(isinstance(i, str) for i in value):
-        raise WorkshopifyError(f'error: {where} {key} must be a list of strings')
+        raise WorkshopifyError(
+            f'error: {where} {_toml_key(key)} must be a list of strings',
+        )
     return tuple(value)
+
+
+def _workshopify(pyproject: Path) -> _Table | None:
+    """The [tool.workshopify] table of a pyproject, or None if it has none."""
+    with pyproject.open('rb') as f:
+        return tomllib.load(f).get('tool', {}).get('workshopify')
 
 
 @dataclass(frozen=True)
 class RenderConfig:
-    files: tuple[str, ...]
+    files: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -62,51 +127,57 @@ class Config:
         return self.root / 'pyproject.toml'
 
     @classmethod
+    def _of(cls, root: Path, table: _Table) -> Self:
+        """A config from an already-parsed table and the resolved root it came from."""
+        # `root` is where the config was found, not something it declares.
+        known = {f.name for f in fields(cls)} - {'root'}
+        top = _checked(table, known, _where())
+
+        context = top.get('context')
+        if not isinstance(context, str):
+            raise WorkshopifyError(
+                f'error: {_where()} context must name the context module',
+            )
+
+        # params is the workshop author's own namespace -- its keys are
+        # whatever the context module reads -- so only its shape is checked.
+        params = top.get('params', {})
+        if not isinstance(params, dict):
+            raise WorkshopifyError(f'error: {_where("params")} must be a table')
+
+        render, at_render = _section(top, 'render', RenderConfig)
+        build, at_build = _section(top, 'build', BuildConfig)
+        notebooks, at_notebooks = _section(top, 'notebooks', NotebooksConfig)
+        return cls(
+            root=root,
+            context=Path(context),
+            render=RenderConfig(**_given(files=_strings(render, 'files', at_render))),
+            build=BuildConfig(
+                **_given(
+                    branch=_string(build, 'branch', at_build),
+                    include=_strings(build, 'include', at_build),
+                    keep_tables=_strings(build, 'keep_tables', at_build),
+                    drop_keys=_strings(build, 'drop_keys', at_build),
+                ),
+            ),
+            notebooks=NotebooksConfig(
+                **_given(src=_string(notebooks, 'src', at_notebooks)),
+            ),
+            params=dict(params),
+        )
+
+    @classmethod
     def load(cls, root: Path) -> Self:
         root = root.resolve()
         pyproject = root / 'pyproject.toml'
         if not pyproject.is_file():
             raise WorkshopifyError(f'error: no pyproject.toml in {root}')
-        with pyproject.open('rb') as f:
-            data = tomllib.load(f)
-        table = data.get('tool', {}).get('workshopify')
+        table = _workshopify(pyproject)
         if table is None:
             raise WorkshopifyError(
-                f'error: no [tool.workshopify] table in {pyproject}',
+                f'error: no {_where()} table in {pyproject}',
             )
-        context = table.get('context')
-        if not isinstance(context, str):
-            raise WorkshopifyError(
-                'error: [tool.workshopify] context must name the context module',
-            )
-        render = table.get('render', {})
-        build = table.get('build', {})
-        notebooks = table.get('notebooks', {})
-        return cls(
-            root=root,
-            context=Path(context),
-            render=RenderConfig(
-                files=_strings(render, 'files', '[tool.workshopify.render]', ()),
-            ),
-            build=BuildConfig(
-                branch=build.get('branch', 'workshop'),
-                include=_strings(build, 'include', '[tool.workshopify.build]', ()),
-                keep_tables=_strings(
-                    build,
-                    'keep-tables',
-                    '[tool.workshopify.build]',
-                    ('project', 'tool.uv'),
-                ),
-                drop_keys=_strings(
-                    build,
-                    'drop-keys',
-                    '[tool.workshopify.build]',
-                    (),
-                ),
-            ),
-            notebooks=NotebooksConfig(src=notebooks.get('src', 'src')),
-            params=dict(table.get('params', {})),
-        )
+        return cls._of(root, table)
 
     @classmethod
     def discover(cls, start: Path | None = None) -> Self:
@@ -115,9 +186,9 @@ class Config:
         for candidate in (start, *start.parents):
             pyproject = candidate / 'pyproject.toml'
             if pyproject.is_file():
-                with pyproject.open('rb') as f:
-                    if 'workshopify' in tomllib.load(f).get('tool', {}):
-                        return cls.load(candidate)
+                table = _workshopify(pyproject)
+                if table is not None:
+                    return cls._of(candidate, table)
         raise WorkshopifyError(
-            f'error: no pyproject.toml with [tool.workshopify] at or above {start}',
+            f'error: no pyproject.toml with {_where()} at or above {start}',
         )
