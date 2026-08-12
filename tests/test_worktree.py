@@ -63,6 +63,32 @@ def test_refuses_a_path_holding_another_branch(tmp_path):
         prepare_worktree(repo, 'two', repo / 'wt', orphan=False)
 
 
+def test_refuses_a_path_holding_a_detached_worktree(tmp_path):
+    """A detached checkout emits no branch line, but the path is taken anyway.
+
+    Reading only branch lines lost the entry, and the collision was then
+    reported as a directory that "is not empty" -- true, and about the wrong
+    thing.
+    """
+    repo = _repo_with_commit(tmp_path)
+    subprocess.run(
+        ['git', 'worktree', 'add', '--detach', str(repo / 'wt')],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    with pytest.raises(WorkshopifyError, match='no branch checked out'):
+        prepare_worktree(repo, 'two', repo / 'wt', orphan=False)
+
+
+def test_refuses_a_target_that_is_a_file(tmp_path):
+    """The default target is a name in the repo root; a repo may already use it."""
+    repo = _repo_with_commit(tmp_path)
+    (repo / 'workshop').write_text('a file, not a worktree')
+    with pytest.raises(WorkshopifyError, match='not a directory'):
+        prepare_worktree(repo, 'workshop', repo / 'workshop', orphan=False)
+
+
 def test_refuses_a_nonempty_directory(tmp_path):
     repo = _repo_with_commit(tmp_path)
     (repo / 'occupied').mkdir()
@@ -93,6 +119,20 @@ def test_tracks_a_remote_branch_on_a_fresh_clone(tmp_path):
     ).stdout.strip()
     assert head == 'origin/pub'
     assert any('tracking origin/pub' in note for note in wt.notes)
+
+
+def test_refuses_a_branch_that_two_remotes_both_have(tmp_path):
+    """Picking a remote here would silently publish against the wrong history."""
+    origin = _repo_with_commit(tmp_path, 'origin_repo')
+    other = _repo_with_commit(tmp_path, 'other_repo')
+    for repo in (origin, other):
+        subprocess.run(['git', 'branch', 'pub'], cwd=repo, check=True)
+    clone = tmp_path / 'clone'
+    subprocess.run(['git', 'clone', '-q', str(origin), str(clone)], check=True)
+    subprocess.run(['git', 'remote', 'add', 'other', str(other)], cwd=clone, check=True)
+    subprocess.run(['git', 'fetch', '-q', 'other'], cwd=clone, check=True)
+    with pytest.raises(WorkshopifyError, match='origin, other'):
+        prepare_worktree(clone, 'pub', clone / 'pub', orphan=False)
 
 
 def test_orphan_branch_has_no_history(tmp_path):
@@ -143,3 +183,16 @@ def test_clean_removes_tracked_files_only(tmp_path):
     clean(wt)
     assert not (wt / 'tracked.txt').exists()
     assert (wt / 'ignored.txt').exists(), 'ignored files must survive'
+
+
+def test_clean_of_a_worktree_with_nothing_tracked_is_a_no_op(tmp_path):
+    """Why `git rm` is passed --ignore-unmatch: the first build has nothing yet.
+
+    An orphan publish branch tracks no files at all, and `git rm .` against a
+    pathspec matching nothing exits 1 -- so --clean would fail on exactly the
+    build that has least to clean.
+    """
+    repo = _repo_with_commit(tmp_path)
+    wt = prepare_worktree(repo, 'pages', repo / 'pages', orphan=True)
+    clean(wt.path)
+    assert not is_dirty(wt.path)

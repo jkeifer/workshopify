@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from workshopify.errors import WorkshopifyError
+from workshopify.errors import WorkshopifyError, diagnosed
 from workshopify.git import git, succeeds
 
 
@@ -68,23 +68,61 @@ def _remotes_with_branch(root: Path, branch: str) -> list[str]:
         f'refs/remotes/*/{branch}',
     )
     return [
-        ref[len('refs/remotes/') :].removesuffix(f'/{branch}')
+        ref.removeprefix('refs/remotes/').removesuffix(f'/{branch}')
         for ref in refs.splitlines()
         if ref
     ]
 
 
-def _worktrees(root: Path) -> dict[Path, str]:
-    """Map each worktree path -> its checked-out branch (bare-checkout aside)."""
-    result: dict[Path, str] = {}
+def _worktrees(root: Path) -> dict[Path, str | None]:
+    """Map each registered worktree path -> the branch it holds, or None.
+
+    A `worktree` line registers the path; a `branch` line only says what is
+    checked out there, and detached and bare checkouts emit none. Keying off
+    the branch line dropped those entries entirely, so a path already occupied
+    by a detached worktree read as merely occupied -- "exists and is not
+    empty", or whatever git said when we handed it the path anyway. Every
+    caller here asks "is this path taken", which is the `worktree` line's
+    question, not the `branch` line's.
+    """
+    result: dict[Path, str | None] = {}
     current: Path | None = None
     for line in git(root, 'worktree', 'list', '--porcelain').splitlines():
         if line.startswith('worktree '):
-            current = Path(line[len('worktree ') :]).resolve()
+            current = Path(line.removeprefix('worktree ')).resolve()
+            result[current] = None
         elif line.startswith('branch ') and current is not None:
             # e.g. "branch refs/heads/workshop"
-            result[current] = line[len('branch ') :].removeprefix('refs/heads/')
+            result[current] = line.removeprefix('branch ').removeprefix('refs/heads/')
     return result
+
+
+def _require_free(path: Path, worktrees: dict[Path, str | None], branch: str) -> None:
+    """Raise unless `path` is somewhere git may be handed for `branch`.
+
+    Three ways it is taken, and each has its own remedy, so each is named:
+    another worktree lives there, something that is not a directory does, or a
+    directory does and it has contents. Handing any of them to `git worktree
+    add` produces git's answer to a question the user did not ask -- or, for a
+    file where a directory was assumed, an ENOTDIR out of the check itself.
+    """
+    if path in worktrees:
+        held = worktrees[path]
+        holding = f'for branch {held!r}' if held else 'with no branch checked out'
+        raise WorkshopifyError(
+            f'error: {path} is already a worktree {holding}, not {branch!r}. '
+            f'Remove it with `git worktree remove`.',
+        )
+    if not path.exists():
+        return
+    # exists() is true of a plain file too, and the default target is a name in
+    # the repo root -- `<repo>/workshop` -- which some repo already uses.
+    if not path.is_dir():
+        raise WorkshopifyError(f'error: {path} exists and is not a directory')
+    with diagnosed(f'reading {path}'):
+        occupied = any(path.iterdir())
+    if occupied:
+        raise WorkshopifyError(f'error: {path} exists and is not empty')
 
 
 def prepare_worktree(
@@ -115,13 +153,7 @@ def prepare_worktree(
             return Worktree(path)
 
     # Nothing checked out `branch` yet. The target path must be free.
-    if path in worktrees:
-        raise WorkshopifyError(
-            f'error: {path} is already a worktree for branch '
-            f'{worktrees[path]!r}, not {branch!r}',
-        )
-    if path.exists() and any(path.iterdir()):
-        raise WorkshopifyError(f'error: {path} exists and is not empty')
+    _require_free(path, worktrees, branch)
 
     if _branch_exists(root, branch):
         git(root, 'worktree', 'add', str(path), branch)

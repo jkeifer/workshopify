@@ -19,19 +19,46 @@ from typing import Any
 import tomlkit
 
 from workshopify.config import Config
-from workshopify.errors import WorkshopifyError
+from workshopify.errors import WorkshopifyError, diagnosed
 
 type _Table = MutableMapping[str, Any]
 type _Paths = dict[str, _Paths]
 
 
-def _paths(dotted: tuple[str, ...]) -> _Paths:
-    """Dotted paths as a tree of keys. A leaf names a whole subtree."""
+def _overlap(kind: str, ancestor: str, descendant: str) -> WorkshopifyError:
+    """The diagnostic for a path listed together with one of its descendants."""
+    return WorkshopifyError(
+        f'error: {kind} path {ancestor!r} already names everything under it, '
+        f'so listing {descendant!r} too says two different things; keep one',
+    )
+
+
+def _paths(dotted: tuple[str, ...], kind: str) -> _Paths:
+    """Dotted paths as a tree of keys. A leaf names a whole subtree.
+
+    Which is why a path listed alongside one of its own descendants is an
+    error rather than a reading to pick: `('tool.uv', 'tool.uv.sources')` asks
+    both for all of [tool.uv] and for only its [sources], and the tree has no
+    room to hold both. The narrow reading is the one that used to win, quietly
+    -- it shipped [tool.uv.sources] and dropped `package = false` -- and a
+    silently wrong pyproject is exactly what `_resolve` refuses for a typo.
+    """
     root: _Paths = {}
+    leaves: set[str] = set()
     for path in dotted:
+        parts = path.split('.')
         node = root
-        for part in path.split('.'):
+        for depth, part in enumerate(parts[:-1], 1):
+            ancestor = '.'.join(parts[:depth])
+            if ancestor in leaves:
+                raise _overlap(kind, ancestor, path)
             node = node.setdefault(part, {})
+        node = node.setdefault(parts[-1], {})
+        # Non-empty means a descendant of this path was listed first; the same
+        # contradiction, met from the other side.
+        if node:
+            raise _overlap(kind, path, f'{path}.{next(iter(node))}')
+        leaves.add(path)
     return root
 
 
@@ -80,39 +107,66 @@ def derive_pyproject(text: str, keep: tuple[str, ...], drop: tuple[str, ...]) ->
 
     A path on either side that matches nothing is an error, not a no-op: a
     typo in `keep` would silently ship a pyproject missing a whole table, and
-    one in `drop` would silently ship the wiring `drop` exists to remove.
+    one in `drop` would silently ship the wiring `drop` exists to remove. A
+    path listed with one of its own descendants is an error for the same
+    reason -- see `_paths`.
     """
     doc = tomlkit.parse(text)
-    _keep_only(doc, _paths(keep))
-    _drop_all(doc, _paths(drop))
+    _keep_only(doc, _paths(keep, 'keep'))
+    _drop_all(doc, _paths(drop, 'drop'))
     return tomlkit.dumps(doc)
 
 
-def write_deps(config: Config, staging: Path) -> None:
+def write_deps(config: Config, staging: Path) -> list[Path]:
     """Write the workshop's pyproject.toml and uv.lock into staging.
 
     The lock is seeded from the repo's own lock and re-resolved offline, so
     it is a derivation of that lock rather than an independent resolution:
     participants get exactly the versions contributors develop against, and
-    the build needs no network.
+    the build needs no network. So a repo that never ran `uv lock` has nothing
+    to derive from, and is told so in those words: left to `copyfile` it is an
+    ENOENT on a path the author never chose to write, naming neither the state
+    nor the one command that fixes it.
+
+    Returns what it wrote, because the build reports its output from what each
+    writing step hands back rather than from a glob. A caller restating these
+    two names is a second place to edit when one moves, and the failure that
+    follows is silent: the cruft check accuses a file the build still writes.
     """
-    (staging / 'pyproject.toml').write_text(
-        derive_pyproject(
-            config.pyproject.read_text(),
-            config.build.keep_tables,
-            config.build.drop_keys,
-        ),
-    )
-    shutil.copyfile(config.root / 'uv.lock', staging / 'uv.lock')
-    try:
-        subprocess.run(
-            ['uv', 'lock', '--offline'],
-            cwd=staging,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-    except subprocess.CalledProcessError as e:
+    seed = config.root / 'uv.lock'
+    if not seed.is_file():
         raise WorkshopifyError(
-            f'error: uv lock --offline failed in {staging}:\n{e.stderr}',
-        ) from e
+            f'error: no lock to derive from at {seed}; run `uv lock` first',
+        )
+
+    pyproject = staging / 'pyproject.toml'
+    lock = staging / 'uv.lock'
+    with diagnosed(f'writing {pyproject}'):
+        pyproject.write_text(
+            derive_pyproject(
+                config.pyproject.read_text(),
+                config.build.keep_tables,
+                config.build.drop_keys,
+            ),
+        )
+    with diagnosed(f'copying {seed} to {lock}'):
+        shutil.copyfile(seed, lock)
+
+    # uv's stderr is the diagnostic when it ran and refused; `diagnosed` has
+    # the other failure, a `uv` that is not on PATH at all -- which is every
+    # install of workshopify that did not come from uv itself.
+    with diagnosed(f'running uv lock --offline in {staging}'):
+        try:
+            subprocess.run(
+                ['uv', 'lock', '--offline'],
+                cwd=staging,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except subprocess.CalledProcessError as e:
+            raise WorkshopifyError(
+                f'error: uv lock --offline failed in {staging}:\n{e.stderr}',
+            ) from e
+
+    return [pyproject, lock]
