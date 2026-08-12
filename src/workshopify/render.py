@@ -29,10 +29,12 @@ job, never this module's.
 
 from __future__ import annotations
 
+import copy
 import difflib
 import io
 import shutil
 
+from contextlib import redirect_stdout
 from enum import Enum, auto
 from pathlib import Path
 from typing import Any
@@ -40,10 +42,11 @@ from typing import Any
 import jupytext
 
 from cogapp import Cog
+from cogapp.cogapp import CogError
 
 from workshopify.config import Config
 from workshopify.context import Context
-from workshopify.errors import WorkshopifyError
+from workshopify.errors import WorkshopifyError, diagnosed
 
 # HTML-comment forms of cog's markers, so a marker that ever leaked into
 # rendered markdown would at least be invisible. One definition, used by
@@ -60,14 +63,61 @@ class PublishError(WorkshopifyError):
     """Stripped output that is structurally unsound and must not ship."""
 
 
+def _isolated(namespace: dict[str, Any]) -> dict[str, Any]:
+    """The namespace copied deeply enough that a generator cannot outlive itself.
+
+    cog execs the generators straight against the mapping it is handed, so a
+    generator that appends to a list it found there changes what the next
+    file, the next run, and `check` after `apply` all see -- making the output
+    a function of how many times it has been rendered, which is exactly what
+    "generated output is a pure function of its source" forbids. A shallow
+    copy protects the binding and not the object bound, so it protects
+    nothing that a generator would plausibly reach for.
+
+    Deep enough, not exhaustive. A value that refuses to be copied -- a module
+    the context imported, an open handle -- is passed through as it is,
+    because refusing to render over one would be a worse failure than the
+    mutation this guards against; and a function defined in the context module
+    still closes over that module's real globals no matter what is done here.
+    """
+    isolated = {}
+    for name, value in namespace.items():
+        try:
+            isolated[name] = copy.deepcopy(value)
+        except Exception:  # noqa: BLE001 -- see above: uncopyable is not fatal
+            isolated[name] = value
+    return isolated
+
+
 def _run(text: str, namespace: dict[str, Any], fname: str, *, delete_code: bool) -> str:
     cog = Cog()
     options = cog.options
     options.begin_spec, options.end_spec, options.end_output = MARKERS
     options.prologue = PROLOGUE
     options.delete_code = delete_code
+    # Everything cog says goes into a buffer nobody reads. It is a command-line
+    # tool underneath: `cog.msg()` and `cog.error()` land on the process
+    # stdout, and a `print()` in a generator -- the first thing anyone reaches
+    # for while debugging one -- lands there too. That stream is where
+    # `workshopify worktree` writes its one machine-readable line, so chatter
+    # on it is not noise but corruption. Both halves are needed: cog binds its
+    # own `stdout` at construction, while a generator's `print` resolves
+    # `sys.stdout` when it runs.
+    chatter = io.StringIO()
+    cog.set_output(stdout=chatter, stderr=chatter)
     out = io.StringIO()
-    cog.process_file(io.StringIO(text), out, fname=fname, globals=dict(namespace))
+    # cog's own errors are what an authoring mistake looks like -- an unclosed
+    # marker, or a generator that throws, which arrives as CogUserException
+    # (a CogError) carrying the generator's traceback. Diagnosed here because
+    # every command runs this, so untranslated they would reach cli.main as a
+    # traceback for the single most likely thing a workshop author gets wrong.
+    with diagnosed(fname, CogError), redirect_stdout(chatter):
+        cog.process_file(
+            io.StringIO(text),
+            out,
+            fname=fname,
+            globals=_isolated(namespace),
+        )
     return out.getvalue()
 
 
@@ -115,12 +165,26 @@ def _asset_problem(target: Path, source: Path) -> AssetProblem | None:
     return None
 
 
+def _problems(ctx: Context) -> list[tuple[Path, Path, AssetProblem]]:
+    """Every declared asset that is wrong, with what is wrong with it.
+
+    One traversal, because both callers need the whole verdict before they act
+    on any of it: apply must know that no source is missing before it copies
+    the first file, and deriving that from the same list it then copies from
+    makes the ordering a step it takes rather than an unwritten rule holding
+    between separate loops. Sorted by target so the diagnostics and the copies
+    come out in the same order every run.
+    """
+    return [
+        (target, source, problem)
+        for target, source in sorted(ctx.assets.items())
+        if (problem := _asset_problem(target, source)) is not None
+    ]
+
+
 def _asset_errors(config: Config, ctx: Context) -> list[str]:
     errors = []
-    for target, source in sorted(ctx.assets.items()):
-        problem = _asset_problem(target, source)
-        if problem is None:
-            continue
+    for target, source, problem in _problems(ctx):
         name = config.display_path(target)
         match problem:
             case AssetProblem.NO_SOURCE:
@@ -135,15 +199,15 @@ def _asset_errors(config: Config, ctx: Context) -> list[str]:
 def apply(config: Config, ctx: Context) -> list[Path]:
     """Re-render every configured file and asset in place; what changed.
 
-    The rendered files are all-or-nothing: every one is rendered in memory
-    before any is written, so a failing generator leaves the tree untouched.
-    The assets are not, and the difference is deliberate. Every asset source
-    is verified to exist before the first write, which forecloses the failure
-    that actually happens -- a screenshot renamed out from under the context
-    module -- but the copies themselves run in sequence, so a permissions
-    error or a full disk partway through leaves the earlier copies, and every
-    rendered file, already applied. Buying atomicity there would mean holding
-    every asset in memory to guard against failures this rare.
+    No write here is atomic, and the guarantee is narrower than that: what is
+    all-or-nothing is the *deciding*. Every file is rendered in memory and
+    every asset source verified to exist before anything is written, so the
+    two failures that actually happen -- a typo'd generator, a screenshot
+    renamed out from under the context module -- are caught while the tree is
+    still untouched. The writes and copies themselves run in sequence, so a
+    permissions error or a full disk partway through leaves the earlier ones
+    applied. Buying atomicity there would mean staging every rendered file and
+    every asset beside its target to guard against failures this rare.
 
     Recoverable rather than atomic, then, and that is enough because apply is
     idempotent: it writes only what differs from what it would write, so a
@@ -151,14 +215,9 @@ def apply(config: Config, ctx: Context) -> list[Path]:
     converges. A run with nothing to do writes nothing and returns [].
     """
     rendered = _rendered(config, ctx)
-    problems = {
-        target: _asset_problem(target, source)
-        for target, source in sorted(ctx.assets.items())
-    }
+    problems = _problems(ctx)
     missing = sorted(
-        source
-        for target, source in ctx.assets.items()
-        if problems[target] is AssetProblem.NO_SOURCE
+        source for _, source, problem in problems if problem is AssetProblem.NO_SOURCE
     )
     if missing:
         raise WorkshopifyError(
@@ -170,11 +229,12 @@ def apply(config: Config, ctx: Context) -> list[Path]:
         if path.read_text() != text:
             path.write_text(text)
             changed.append(path)
-    for target, source in sorted(ctx.assets.items()):
-        if problems[target] is not None:
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(source, target)
-            changed.append(target)
+    # Every remaining problem is one a copy fixes: NO_SOURCE was the only kind
+    # apply treats as an error, and it has already raised.
+    for target, source, _ in problems:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
+        changed.append(target)
     return changed
 
 

@@ -1,8 +1,41 @@
+import shutil
+
+from pathlib import Path
+
 import pytest
 
+from workshopify import context, render
 from workshopify.config import Config
 from workshopify.errors import WorkshopifyError
 from workshopify.params import set_param
+
+# Two assets, so a copy can be made to fail after another has already landed
+# -- the only way to reach a failure that happens *after* apply has written.
+TWO_ASSETS = """\
+word = params['greeting']
+
+
+def shout() -> str:
+    return word.upper()
+
+
+ASSETS = {
+    'notebooks/assets/logo.png': 'assets/logo.png',
+    'notebooks/assets/second.png': 'assets/second.png',
+}
+"""
+
+
+def _typed(fixture_repo, line):
+    """The fixture's params table with one more param of a non-string type."""
+    pyproject = fixture_repo / 'pyproject.toml'
+    pyproject.write_text(
+        pyproject.read_text().replace(
+            'greeting = "hello"',
+            f'greeting = "hello"\n{line}',
+        ),
+    )
+    return Config.load(fixture_repo)
 
 
 def test_set_rewrites_the_param_and_rerenders(fixture_repo):
@@ -49,6 +82,61 @@ def test_set_rolls_back_when_rendering_fails(fixture_repo):
         set_param(Config.load(fixture_repo), 'greeting', 'boom')
     assert (fixture_repo / 'pyproject.toml').read_text() == original
     assert (fixture_repo / 'src/01_example.py').read_text() == src_before
+
+
+def test_set_rolls_back_only_the_param_when_a_later_write_fails(
+    fixture_repo,
+    monkeypatch,
+):
+    """The rollback the docstring claims, at the point the earlier test cannot
+    reach: a failure *after* apply has already written some of the tree."""
+    (fixture_repo / 'assets/second.png').write_bytes(b'\x89PNG second')
+    (fixture_repo / 'context.py').write_text(TWO_ASSETS)
+    original = (fixture_repo / 'pyproject.toml').read_text()
+    src = fixture_repo / 'src/01_example.py'
+    copyfile = shutil.copyfile
+
+    def fail_on_second(source, target, **kwargs):
+        if Path(target).name == 'second.png':
+            raise PermissionError(target)
+        return copyfile(source, target, **kwargs)
+
+    monkeypatch.setattr(render.shutil, 'copyfile', fail_on_second)
+    with pytest.raises(PermissionError):
+        set_param(Config.load(fixture_repo), 'greeting', 'kia ora')
+
+    # The param is back, and the files apply had already written are not:
+    # set_param undoes its own write, and nothing else.
+    assert (fixture_repo / 'pyproject.toml').read_text() == original
+    assert 'word = "kia ora"' in src.read_text()
+    assert (fixture_repo / 'notebooks/assets/logo.png').is_file()
+
+    # Which is why the docstring calls it convergence rather than atomicity:
+    # pyproject is the source of truth, and a re-render restores the tree to
+    # agree with it.
+    monkeypatch.undo()
+    config = Config.load(fixture_repo)
+    render.apply(config, context.load(config))
+    assert 'word = "hello"' in src.read_text()
+    assert render.check(config, context.load(config)) == []
+
+
+def test_set_coerces_to_the_type_the_param_already_has(fixture_repo):
+    config = _typed(fixture_repo, 'port = 8080\ndebug = false')
+    set_param(config, 'port', '9090')
+    set_param(Config.load(fixture_repo), 'debug', 'yes')
+    params = Config.load(fixture_repo).params
+    assert params['port'] == 9090
+    assert params['debug'] is True
+    assert 'port = 9090' in (fixture_repo / 'pyproject.toml').read_text()
+
+
+def test_set_refuses_a_value_of_the_wrong_type(fixture_repo):
+    config = _typed(fixture_repo, 'port = 8080')
+    with pytest.raises(WorkshopifyError, match=r"param 'port' is int, given 'http'"):
+        set_param(config, 'port', 'http')
+    # Refused before the rewrite, so there is nothing to roll back.
+    assert 'port = 8080' in (fixture_repo / 'pyproject.toml').read_text()
 
 
 def test_set_to_the_current_value_still_restores_assets(fixture_repo):
