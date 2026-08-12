@@ -4,6 +4,8 @@ from pathlib import Path
 
 import pytest
 
+from conftest import rewrite
+
 from workshopify import context, render
 from workshopify.config import Config
 from workshopify.errors import WorkshopifyError
@@ -28,13 +30,7 @@ ASSETS = {
 
 def _typed(fixture_repo, line):
     """The fixture's params table with one more param of a non-string type."""
-    pyproject = fixture_repo / 'pyproject.toml'
-    pyproject.write_text(
-        pyproject.read_text().replace(
-            'greeting = "hello"',
-            f'greeting = "hello"\n{line}',
-        ),
-    )
+    rewrite(fixture_repo, 'greeting = "hello"', f'greeting = "hello"\n{line}')
     return Config.load(fixture_repo)
 
 
@@ -49,15 +45,13 @@ def test_set_rewrites_the_param_and_rerenders(fixture_repo):
 
 
 def test_set_preserves_pyproject_comments(fixture_repo):
-    pyproject = fixture_repo / 'pyproject.toml'
-    pyproject.write_text(
-        pyproject.read_text().replace(
-            '[tool.workshopify.params]',
-            '# which greeting ships\n[tool.workshopify.params]',
-        ),
+    rewrite(
+        fixture_repo,
+        '[tool.workshopify.params]',
+        '# which greeting ships\n[tool.workshopify.params]',
     )
     set_param(Config.load(fixture_repo), 'greeting', 'howdy')
-    assert '# which greeting ships' in pyproject.read_text()
+    assert '# which greeting ships' in (fixture_repo / 'pyproject.toml').read_text()
 
 
 def test_set_rejects_an_unknown_param(fixture_repo):

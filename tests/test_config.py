@@ -3,17 +3,11 @@ from pathlib import Path
 
 import pytest
 
+from conftest import rewrite
+
 from workshopify import config as config_module
 from workshopify.config import BuildConfig, Config, NotebooksConfig, RenderConfig
 from workshopify.errors import WorkshopifyError
-
-
-def rewrite(root: Path, old: str, new: str) -> None:
-    """Edit the fixture repo's pyproject.toml in place."""
-    pyproject = root / 'pyproject.toml'
-    text = pyproject.read_text()
-    assert old in text
-    pyproject.write_text(text.replace(old, new))
 
 
 def test_load_reads_the_tables(fixture_repo):

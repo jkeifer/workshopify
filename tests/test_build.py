@@ -7,41 +7,25 @@ from pathlib import Path
 
 import pytest
 
-from conftest import git_repo
+from conftest import commit_all, git_repo, load_workshop, rewrite, uv_lock
 
-from workshopify import build, context
-from workshopify.config import Config
+from workshopify import build
+from workshopify.context import Context
 from workshopify.errors import WorkshopifyError
-
-
-def _setup(fixture_repo):
-    config = Config.load(fixture_repo)
-    return config, context.load(config)
-
-
-def _lock(fixture_repo):
-    """The repo lock every build derives the participants' lock from."""
-    subprocess.run(['uv', 'lock'], cwd=fixture_repo, check=True, capture_output=True)
 
 
 def _set_include(fixture_repo, *entries):
     """Rewrite [tool.workshopify.build] include to name exactly `entries`."""
-    pyproject = fixture_repo / 'pyproject.toml'
     listed = ', '.join(f'"{entry}"' for entry in entries)
-    pyproject.write_text(
-        pyproject.read_text().replace(
-            'include = ["Dockerfile"]',
-            f'include = [{listed}]',
-        ),
-    )
+    rewrite(fixture_repo, 'include = ["Dockerfile"]', f'include = [{listed}]')
 
 
 # --- build tree assembly ---------------------------------------------------
 
 
 def test_build_writes_the_complete_tree(fixture_repo, tmp_path):
-    _lock(fixture_repo)
-    config, ctx = _setup(fixture_repo)
+    uv_lock(fixture_repo)
+    config, ctx = load_workshop(fixture_repo)
     written = build.build(config, ctx, tmp_path)
     relative = {str(p) for p in written}
 
@@ -81,8 +65,8 @@ def test_build_is_idempotent(fixture_repo, tmp_path):
     This is the property that makes a from-scratch publish reviewable: if
     it fails, every publish diff is churn and the review step is useless.
     """
-    _lock(fixture_repo)
-    config, ctx = _setup(fixture_repo)
+    uv_lock(fixture_repo)
+    config, ctx = load_workshop(fixture_repo)
     first, second = tmp_path / 'one', tmp_path / 'two'
     build.build(config, ctx, first)
     build.build(config, ctx, second)
@@ -101,8 +85,8 @@ def test_rebuilding_into_the_same_directory_matches_a_fresh_build(
     does, so this asserts a second build over the first is indistinguishable
     from a single build into a clean tree.
     """
-    _lock(fixture_repo)
-    config, ctx = _setup(fixture_repo)
+    uv_lock(fixture_repo)
+    config, ctx = load_workshop(fixture_repo)
     reused, fresh = tmp_path / 'reused', tmp_path / 'fresh'
     build.build(config, ctx, reused)
     build.build(config, ctx, reused)
@@ -118,8 +102,8 @@ def test_build_does_not_report_stale_files_as_written(fixture_repo, tmp_path):
     written -- which globbing the destination does -- a renamed exercise
     would keep shipping its old file, silently.
     """
-    _lock(fixture_repo)
-    config, ctx = _setup(fixture_repo)
+    uv_lock(fixture_repo)
+    config, ctx = load_workshop(fixture_repo)
     build.build(config, ctx, tmp_path)
 
     stale = [
@@ -149,9 +133,7 @@ def test_build_diagnoses_an_asset_target_outside_the_repo_root(
     with no place there must be a diagnostic rather than relative_to's bare
     ValueError.
     """
-    config, ctx = _setup(fixture_repo)
-    from workshopify.context import Context
-
+    config, ctx = load_workshop(fixture_repo)
     escaped = Context(
         namespace=ctx.namespace,
         assets={(tmp_path / 'outside.png').resolve(): fixture_repo / 'assets/logo.png'},
@@ -183,8 +165,8 @@ def test_a_directory_include_reports_every_file_it_writes(fixture_repo, tmp_path
     (data / 'link').symlink_to('../shared')
 
     _set_include(fixture_repo, 'data')
-    _lock(fixture_repo)
-    config, ctx = _setup(fixture_repo)
+    uv_lock(fixture_repo)
+    config, ctx = load_workshop(fixture_repo)
     written = build.build(config, ctx, tmp_path)
 
     reported = {p for p in written if p.parts[0] == 'data'}
@@ -204,7 +186,7 @@ def test_a_broken_symlink_in_an_include_diagnoses(fixture_repo, tmp_path):
     data.mkdir()
     (data / 'dangling').symlink_to('gone.txt')
     _set_include(fixture_repo, 'data')
-    config, ctx = _setup(fixture_repo)
+    config, ctx = load_workshop(fixture_repo)
     with pytest.raises(WorkshopifyError, match='copying'):
         build.build(config, ctx, tmp_path)
 
@@ -212,7 +194,7 @@ def test_a_broken_symlink_in_an_include_diagnoses(fixture_repo, tmp_path):
 def test_a_missing_include_entry_diagnoses(fixture_repo, tmp_path):
     """A typo'd entry ships a tree missing the file it named."""
     _set_include(fixture_repo, 'nope.txt')
-    config, ctx = _setup(fixture_repo)
+    config, ctx = load_workshop(fixture_repo)
     with pytest.raises(WorkshopifyError, match='does not exist'):
         build.build(config, ctx, tmp_path)
 
@@ -224,7 +206,7 @@ def test_an_absolute_include_entry_diagnoses(fixture_repo, tmp_path):
     the relative_to that reports it has nothing to subtract.
     """
     _set_include(fixture_repo, str(fixture_repo / 'Dockerfile'))
-    config, ctx = _setup(fixture_repo)
+    config, ctx = load_workshop(fixture_repo)
     with pytest.raises(WorkshopifyError, match='include entry'):
         build.build(config, ctx, tmp_path)
 
@@ -244,7 +226,7 @@ def test_an_include_entry_that_climbs_out_of_the_repo_diagnoses(
     outside.mkdir()
     (outside / 'x.txt').write_text('x')
     _set_include(fixture_repo, '../shared')
-    config, ctx = _setup(fixture_repo)
+    config, ctx = load_workshop(fixture_repo)
     # A staging directory with a parent of its own, so `staging / '../shared'`
     # is somewhere the test can look for and not the source it came from.
     staging = tmp_path / 'stage' / 'wt'
@@ -273,8 +255,8 @@ def test_every_copy_takes_its_mode_from_the_source(fixture_repo, tmp_path):
         ctx_py.read_text() + "ASSETS['tools/tool.sh'] = 'assets/tool.sh'\n",
     )
     _set_include(fixture_repo, 'setup.sh', 'bin')
-    _lock(fixture_repo)
-    config, ctx = _setup(fixture_repo)
+    uv_lock(fixture_repo)
+    config, ctx = load_workshop(fixture_repo)
 
     # One per way a file reaches the tree: a single-file include, a directory
     # include, the static/ overlay, and an asset.
@@ -293,8 +275,8 @@ def test_every_copy_takes_its_mode_from_the_source(fixture_repo, tmp_path):
 def test_a_repo_with_no_static_directory_builds(fixture_repo, tmp_path):
     """The overlay is optional; a repo without one is not a build failure."""
     shutil.rmtree(fixture_repo / 'static')
-    _lock(fixture_repo)
-    config, ctx = _setup(fixture_repo)
+    uv_lock(fixture_repo)
+    config, ctx = load_workshop(fixture_repo)
     written = build.build(config, ctx, tmp_path)
     assert Path('README.md') not in written
     assert not (tmp_path / 'README.md').exists()
@@ -303,16 +285,11 @@ def test_a_repo_with_no_static_directory_builds(fixture_repo, tmp_path):
 # --- unwritten -------------------------------------------------------------
 
 
-def _commit_all(wt):
-    subprocess.run(['git', 'add', '-A'], cwd=wt, check=True)
-    subprocess.run(['git', 'commit', '-qm', 'x'], cwd=wt, check=True)
-
-
 def test_unwritten_reports_tracked_files_the_build_did_not_write(tmp_path):
     wt = git_repo(tmp_path / 'wt')
     (wt / 'kept.txt').write_text('a')
     (wt / 'orphan.txt').write_text('b')
-    _commit_all(wt)
+    commit_all(wt)
     stale = build.unwritten(wt, {Path('kept.txt')})
     assert [str(p) for p in stale] == ['orphan.txt']
 
@@ -326,7 +303,7 @@ def test_unwritten_matches_a_non_ascii_tracked_path(tmp_path):
     """
     wt = git_repo(tmp_path / 'wt')
     (wt / 'café.txt').write_text('a')
-    _commit_all(wt)
+    commit_all(wt)
     quoted = subprocess.run(
         ['git', 'ls-files'],
         cwd=wt,
@@ -343,7 +320,7 @@ def test_unwritten_matches_a_non_ascii_tracked_path(tmp_path):
 def test_unwritten_ignores_untracked_files(tmp_path):
     wt = git_repo(tmp_path / 'wt')
     (wt / 'tracked.txt').write_text('a')
-    _commit_all(wt)
+    commit_all(wt)
     (wt / 'scratch.txt').write_text('b')
     assert build.unwritten(wt, {Path('tracked.txt')}) == []
 
@@ -373,10 +350,10 @@ def _recording_build(calls, names=('built.txt',)):
 
 
 def test_publish_into_refuses_a_dirty_worktree(fixture_repo, tmp_path, monkeypatch):
-    config, ctx = _setup(fixture_repo)
+    config, ctx = load_workshop(fixture_repo)
     wt = git_repo(tmp_path / 'wt')
     (wt / 'a.txt').write_text('a')
-    _commit_all(wt)
+    commit_all(wt)
     (wt / 'a.txt').write_text('dirty')
 
     calls = []
@@ -405,10 +382,10 @@ def test_publish_into_refuses_a_dirty_worktree_in_clean_mode(
     Narrowing it to the default mode would leave --clean deleting notebook
     edits made in Jupyter that exist nowhere else yet.
     """
-    config, ctx = _setup(fixture_repo)
+    config, ctx = load_workshop(fixture_repo)
     wt = git_repo(tmp_path / 'wt')
     (wt / 'a.txt').write_text('a')
-    _commit_all(wt)
+    commit_all(wt)
     (wt / 'new.txt').write_text('n')
 
     calls = []
@@ -433,10 +410,10 @@ def test_publish_into_overwrite_dirty_bypasses_the_guard(
     tmp_path,
     monkeypatch,
 ):
-    config, ctx = _setup(fixture_repo)
+    config, ctx = load_workshop(fixture_repo)
     wt = git_repo(tmp_path / 'wt')
     (wt / 'a.txt').write_text('a')
-    _commit_all(wt)
+    commit_all(wt)
     (wt / 'a.txt').write_text('dirty')
 
     calls = []
@@ -468,10 +445,10 @@ def test_publish_into_clean_overwrite_dirty_removes_a_modified_tracked_file(
     escape hatch is exactly the broken one, and it fails with git's
     explanation thrown away.
     """
-    config, ctx = _setup(fixture_repo)
+    config, ctx = load_workshop(fixture_repo)
     wt = git_repo(tmp_path / 'wt')
     (wt / 'a.txt').write_text('a')
-    _commit_all(wt)
+    commit_all(wt)
     (wt / 'a.txt').write_text('locally modified')
 
     calls = []
@@ -494,10 +471,10 @@ def test_publish_into_returns_a_tracked_file_the_build_did_not_write(
     monkeypatch,
 ):
     """The cruft report is data, not output; the CLI decides how to show it."""
-    config, ctx = _setup(fixture_repo)
+    config, ctx = load_workshop(fixture_repo)
     wt = git_repo(tmp_path / 'wt')
     (wt / 'orphan.txt').write_text('o')
-    _commit_all(wt)
+    commit_all(wt)
 
     calls = []
     monkeypatch.setattr(build, 'build', _recording_build(calls))
@@ -511,17 +488,3 @@ def test_publish_into_returns_a_tracked_file_the_build_did_not_write(
     )
     assert published.written == {Path('built.txt')}
     assert published.stale == [Path('orphan.txt')]
-
-
-def test_publish_into_says_nothing(fixture_repo, tmp_path, monkeypatch, capsys):
-    """Every line the user sees is the CLI's to print, not this layer's."""
-    config, ctx = _setup(fixture_repo)
-    wt = git_repo(tmp_path / 'wt')
-    (wt / 'orphan.txt').write_text('o')
-    _commit_all(wt)
-    monkeypatch.setattr(build, 'build', _recording_build([]))
-
-    build.publish_into(config, ctx, wt, clean_first=False, overwrite_dirty=False)
-
-    captured = capsys.readouterr()
-    assert (captured.out, captured.err) == ('', '')

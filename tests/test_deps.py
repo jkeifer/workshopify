@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import subprocess
 import tomllib
 import zipfile
 
@@ -8,6 +7,8 @@ from pathlib import Path
 
 import pytest
 import tomlkit
+
+from conftest import uv_lock
 
 from workshopify import deps
 from workshopify.config import Config
@@ -250,15 +251,6 @@ def _depend_on(repo: Path, name: str, index: Path) -> None:
     (repo / 'pyproject.toml').write_text(tomlkit.dumps(doc))
 
 
-def _lock(repo: Path) -> None:
-    subprocess.run(
-        ['uv', 'lock', '--offline'],
-        cwd=repo,
-        check=True,
-        capture_output=True,
-    )
-
-
 def _pins(lock: Path) -> dict[str, str]:
     return {p['name']: p['version'] for p in tomllib.loads(lock.read_text())['package']}
 
@@ -267,7 +259,7 @@ def test_write_deps_derives_the_pyproject_and_reports_both_files(
     fixture_repo,
     tmp_path,
 ):
-    _lock(fixture_repo)
+    uv_lock(fixture_repo, '--offline')
     staging = tmp_path / 'staging'
     staging.mkdir()
     written = deps.write_deps(Config.load(fixture_repo), staging)
@@ -293,7 +285,7 @@ def test_write_deps_pins_what_the_repo_pins(fixture_repo, tmp_path):
     index.mkdir()
     _wheel(index, 'workshopify-fixture-dep', '1.0.0')
     _depend_on(fixture_repo, 'workshopify-fixture-dep', index)
-    _lock(fixture_repo)
+    uv_lock(fixture_repo, '--offline')
     assert _pins(fixture_repo / 'uv.lock')['workshopify-fixture-dep'] == '1.0.0'
 
     _wheel(index, 'workshopify-fixture-dep', '2.0.0')
@@ -316,7 +308,7 @@ def test_write_deps_without_a_repo_lock_names_the_command_that_makes_one(
 
 def test_write_deps_carries_what_uv_said_when_it_refused(fixture_repo, tmp_path):
     """uv's stderr is the diagnostic; the wrapper only says where it happened."""
-    _lock(fixture_repo)
+    uv_lock(fixture_repo, '--offline')
     index = tmp_path / 'empty-index'
     index.mkdir()
     # Locked with no dependencies, then asked for one nothing offline can supply.
@@ -331,7 +323,7 @@ def test_write_deps_carries_what_uv_said_when_it_refused(fixture_repo, tmp_path)
 
 def test_write_deps_diagnoses_a_uv_it_cannot_run(fixture_repo, tmp_path, monkeypatch):
     """Nothing makes a pipx-installed workshopify have uv on PATH."""
-    _lock(fixture_repo)
+    uv_lock(fixture_repo, '--offline')
     config = Config.load(fixture_repo)
     staging = tmp_path / 'staging'
     staging.mkdir()

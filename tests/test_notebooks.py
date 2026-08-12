@@ -4,30 +4,25 @@ import re
 import nbformat
 import pytest
 
-from workshopify import context, notebooks
-from workshopify.config import Config
+from conftest import load_workshop, rewrite
+
+from workshopify import notebooks
 from workshopify.errors import WorkshopifyError
 
 # nbformat's own rule for a cell id, restated so a test failure names it.
 CELL_ID = re.compile(r'^[a-zA-Z0-9-_]{1,64}$')
 
 
-def _setup(fixture_repo):
-    config = Config.load(fixture_repo)
-    return config, context.load(config)
-
-
 def _restem(fixture_repo, stem):
     """Rename the fixture's one notebook, in pyproject and in src/, to `stem`."""
-    pyproject = fixture_repo / 'pyproject.toml'
-    pyproject.write_text(pyproject.read_text().replace('01_example', stem))
+    rewrite(fixture_repo, '01_example', stem)
     (fixture_repo / 'src' / '01_example.py').rename(
         fixture_repo / 'src' / f'{stem}.py',
     )
 
 
 def test_generate_writes_completed_exercise_and_notes(fixture_repo, tmp_path):
-    config, ctx = _setup(fixture_repo)
+    config, ctx = load_workshop(fixture_repo)
     out = tmp_path / 'out'
     written = notebooks.generate(config, ctx, out)
     names = {str(p.relative_to(out.resolve())) for p in written}
@@ -41,7 +36,7 @@ def test_generate_writes_completed_exercise_and_notes(fixture_repo, tmp_path):
 
 
 def test_generate_is_byte_identical_across_runs(fixture_repo, tmp_path):
-    config, ctx = _setup(fixture_repo)
+    config, ctx = load_workshop(fixture_repo)
     a, b = tmp_path / 'a', tmp_path / 'b'
     notebooks.generate(config, ctx, a)
     notebooks.generate(config, ctx, b)
@@ -50,7 +45,7 @@ def test_generate_is_byte_identical_across_runs(fixture_repo, tmp_path):
 
 
 def test_cell_ids_are_positional_and_nbformat_legal(fixture_repo, tmp_path):
-    config, ctx = _setup(fixture_repo)
+    config, ctx = load_workshop(fixture_repo)
     written = notebooks.generate(config, ctx, tmp_path / 'out')
     completed = next(p for p in written if 'completed' in str(p))
     cells = json.loads(completed.read_text())['cells']
@@ -81,7 +76,7 @@ def test_a_stem_nbformat_would_reject_still_mints_valid_ids(
     published file.
     """
     _restem(fixture_repo, stem)
-    config, ctx = _setup(fixture_repo)
+    config, ctx = load_workshop(fixture_repo)
     for path in notebooks.generate(config, ctx, tmp_path / 'out'):
         if path.suffix != '.ipynb':
             continue
@@ -114,7 +109,7 @@ def test_id_stems_are_legal_deterministic_and_collision_free():
 
 
 def test_no_templating_reaches_any_notebook(fixture_repo, tmp_path):
-    config, ctx = _setup(fixture_repo)
+    config, ctx = load_workshop(fixture_repo)
     for p in notebooks.generate(config, ctx, tmp_path / 'out'):
         assert '[[[' not in p.read_text()
 
@@ -125,7 +120,7 @@ def test_generate_returns_exactly_the_files_it_wrote(fixture_repo, tmp_path):
     stale = out / 'notebooks' / '99_renamed-away.ipynb'
     stale.parent.mkdir(parents=True)
     stale.write_text('stale')
-    config, ctx = _setup(fixture_repo)
+    config, ctx = load_workshop(fixture_repo)
     written = notebooks.generate(config, ctx, out)
     assert written, 'nothing was generated'
     assert all(p.is_absolute() for p in written)
@@ -141,7 +136,7 @@ def test_generate_writes_nothing_outside_the_output_dir(fixture_repo, tmp_path):
     the run still reporting success. An unchanged source repo is the only
     symptom there is.
     """
-    config, ctx = _setup(fixture_repo)
+    config, ctx = load_workshop(fixture_repo)
     before = set(fixture_repo.rglob('*'))
     notebooks.generate(config, ctx, tmp_path / 'out')
     assert set(fixture_repo.rglob('*')) == before
@@ -160,7 +155,7 @@ def test_a_notes_file_with_no_notes_is_not_written_or_reported(
         if 'scrub-note' not in line
     ]
     src.write_text(''.join(kept))
-    config, ctx = _setup(fixture_repo)
+    config, ctx = load_workshop(fixture_repo)
     out = tmp_path / 'out'
     written = notebooks.generate(config, ctx, out)
     assert not (out / 'notes' / '01_example.md').exists()
@@ -171,21 +166,19 @@ def test_missing_source_file_diagnoses(fixture_repo, tmp_path):
     (fixture_repo / 'src' / '01_example.py').rename(
         fixture_repo / 'src' / '02_other.py',
     )
-    config, ctx = _setup(fixture_repo)
+    config, ctx = load_workshop(fixture_repo)
     with pytest.raises(WorkshopifyError, match='missing source file'):
         notebooks.generate(config, ctx, tmp_path / 'out')
 
 
 def test_a_configured_path_outside_the_repo_diagnoses(fixture_repo, tmp_path):
     """There is nowhere under output_dir to put it, and no traceback for it."""
-    pyproject = fixture_repo / 'pyproject.toml'
-    pyproject.write_text(
-        pyproject.read_text().replace(
-            'output = "notebooks/01_example.ipynb"',
-            'output = "../elsewhere/01_example.ipynb"',
-        ),
+    rewrite(
+        fixture_repo,
+        'output = "notebooks/01_example.ipynb"',
+        'output = "../elsewhere/01_example.ipynb"',
     )
-    config, ctx = _setup(fixture_repo)
+    config, ctx = load_workshop(fixture_repo)
     with pytest.raises(WorkshopifyError, match='outside the repo'):
         notebooks.generate(config, ctx, tmp_path / 'out')
 
@@ -197,11 +190,8 @@ def test_notes_with_nowhere_to_go_diagnoses(fixture_repo, tmp_path):
     nothing here ships an exercise whose cleared cells point at a "(See
     notes: ...)" document that was never written.
     """
-    pyproject = fixture_repo / 'pyproject.toml'
-    pyproject.write_text(
-        pyproject.read_text().replace('notes-file = "notes/01_example.md"\n', ''),
-    )
-    config, ctx = _setup(fixture_repo)
+    rewrite(fixture_repo, 'notes-file = "notes/01_example.md"\n', '')
+    config, ctx = load_workshop(fixture_repo)
     with pytest.raises(WorkshopifyError, match='no notes-file is configured'):
         notebooks.generate(config, ctx, tmp_path / 'out')
 
@@ -213,14 +203,12 @@ def test_a_malformed_scrubber_section_diagnoses(fixture_repo, tmp_path):
     and the author who typo'd the key is owed the sentence naming it rather
     than a traceback out of cli.
     """
-    pyproject = fixture_repo / 'pyproject.toml'
-    pyproject.write_text(
-        pyproject.read_text().replace(
-            '[tool.ipynb-scrubber.options]',
-            '[tool.ipynb-scrubber]\nfliles = []\n\n[tool.ipynb-scrubber.options]',
-        ),
+    rewrite(
+        fixture_repo,
+        '[tool.ipynb-scrubber.options]',
+        '[tool.ipynb-scrubber]\nfliles = []\n\n[tool.ipynb-scrubber.options]',
     )
-    config, ctx = _setup(fixture_repo)
+    config, ctx = load_workshop(fixture_repo)
     with pytest.raises(WorkshopifyError, match='fliles'):
         notebooks.generate(config, ctx, tmp_path / 'out')
 
@@ -233,7 +221,7 @@ def test_a_bad_marker_diagnoses_against_the_source_file(fixture_repo, tmp_path):
     src.write_text(
         src.read_text().replace('#| scrub-note: example-note', '#| scrub-note')
     )
-    config, ctx = _setup(fixture_repo)
+    config, ctx = load_workshop(fixture_repo)
     with pytest.raises(WorkshopifyError, match=r'01_example\.py'):
         notebooks.generate(config, ctx, tmp_path / 'out')
 
@@ -246,7 +234,7 @@ def test_cleared_cells_carry_the_configured_clear_text(fixture_repo, tmp_path):
     empty value would otherwise slip a placeholder into every exercise cell
     with nothing failing.
     """
-    config, ctx = _setup(fixture_repo)
+    config, ctx = load_workshop(fixture_repo)
     out = tmp_path / 'out'
     notebooks.generate(config, ctx, out)
     exercise = json.loads((out / 'notebooks' / '01_example.ipynb').read_text())

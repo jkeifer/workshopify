@@ -1,5 +1,7 @@
 import pytest
 
+from conftest import rewrite
+
 from workshopify import context
 from workshopify.config import Config
 from workshopify.errors import WorkshopifyError
@@ -12,10 +14,7 @@ def test_namespace_carries_module_level_names(fixture_repo):
 
 
 def test_params_are_injected(fixture_repo):
-    pyproject = fixture_repo / 'pyproject.toml'
-    pyproject.write_text(
-        pyproject.read_text().replace('greeting = "hello"', 'greeting = "kia ora"'),
-    )
+    rewrite(fixture_repo, 'greeting = "hello"', 'greeting = "kia ora"')
     ctx = context.load(Config.load(fixture_repo))
     assert ctx.namespace['word'] == 'kia ora'
 

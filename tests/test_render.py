@@ -4,8 +4,9 @@ from pathlib import Path
 
 import pytest
 
-from workshopify import context, render
-from workshopify.config import Config
+from conftest import load_workshop, rewrite
+
+from workshopify import render
 from workshopify.errors import WorkshopifyError
 
 TWO_ASSETS = """\
@@ -51,12 +52,7 @@ def _sole_source(fixture_repo, context_text, src_text):
     """The fixture reduced to one context and one rendered file, both given."""
     (fixture_repo / 'context.py').write_text(context_text)
     (fixture_repo / 'src/01_example.py').write_text(src_text)
-    return _setup(fixture_repo)
-
-
-def _setup(fixture_repo):
-    config = Config.load(fixture_repo)
-    return config, context.load(config)
+    return load_workshop(fixture_repo)
 
 
 def _snapshot(root):
@@ -71,7 +67,7 @@ def _snapshot(root):
 def test_fresh_fixture_renders_clean(fixture_repo):
     # The fresh fixture's rendered values are already up to date; the only
     # thing not yet in place is the declared asset, which apply() copies.
-    config, ctx = _setup(fixture_repo)
+    config, ctx = load_workshop(fixture_repo)
     assert not any('stale rendered values' in e for e in render.check(config, ctx))
     changed = render.apply(config, ctx)
     assert [p.name for p in changed] == ['logo.png']
@@ -79,11 +75,8 @@ def test_fresh_fixture_renders_clean(fixture_repo):
 
 
 def test_stale_value_is_reported_and_applied(fixture_repo):
-    pyproject = fixture_repo / 'pyproject.toml'
-    pyproject.write_text(
-        pyproject.read_text().replace('greeting = "hello"', 'greeting = "tena koe"'),
-    )
-    config, ctx = _setup(fixture_repo)
+    rewrite(fixture_repo, 'greeting = "hello"', 'greeting = "tena koe"')
+    config, ctx = load_workshop(fixture_repo)
     errors = render.check(config, ctx)
     stale = [e for e in errors if 'stale rendered values' in e]
     assert len(stale) == 1
@@ -96,7 +89,7 @@ def test_stale_value_is_reported_and_applied(fixture_repo):
 
 
 def test_missing_asset_is_reported_and_applied(fixture_repo):
-    config, ctx = _setup(fixture_repo)
+    config, ctx = load_workshop(fixture_repo)
     target = fixture_repo / 'notebooks/assets/logo.png'
     assert not target.exists()
     # check() reports it while the rendered text is otherwise clean
@@ -110,7 +103,7 @@ def test_missing_asset_is_reported_and_applied(fixture_repo):
 
 
 def test_stale_asset_is_replaced(fixture_repo):
-    config, ctx = _setup(fixture_repo)
+    config, ctx = load_workshop(fixture_repo)
     render.apply(config, ctx)
     target = fixture_repo / 'notebooks/assets/logo.png'
     target.write_bytes(b'stale')
@@ -121,7 +114,7 @@ def test_stale_asset_is_replaced(fixture_repo):
 
 def test_apply_refuses_a_missing_asset_source_before_writing(fixture_repo):
     (fixture_repo / 'assets/logo.png').unlink()
-    config, ctx = _setup(fixture_repo)
+    config, ctx = load_workshop(fixture_repo)
     with pytest.raises(WorkshopifyError, match=r'logo\.png'):
         render.apply(config, ctx)
 
@@ -129,7 +122,7 @@ def test_apply_refuses_a_missing_asset_source_before_writing(fixture_repo):
 def test_check_reports_a_missing_asset_source(fixture_repo):
     # apply refuses outright; check has to keep going and say which asset it
     # could not even compare, naming the source rather than the target.
-    config, ctx = _setup(fixture_repo)
+    config, ctx = load_workshop(fixture_repo)
     (fixture_repo / 'assets/logo.png').unlink()
     errors = render.check(config, ctx)
     assert any('missing; cannot check notebooks/assets/logo.png' in e for e in errors)
@@ -138,7 +131,7 @@ def test_check_reports_a_missing_asset_source(fixture_repo):
 def test_apply_is_idempotent(fixture_repo):
     # The claim apply's docstring makes: a second run writes nothing at all,
     # so the tree -- contents and mtimes alike -- is untouched.
-    config, ctx = _setup(fixture_repo)
+    config, ctx = load_workshop(fixture_repo)
     render.apply(config, ctx)
     before = _snapshot(fixture_repo)
     assert render.apply(config, ctx) == []
@@ -169,7 +162,7 @@ def test_apply_converges_after_a_partial_asset_failure(fixture_repo, monkeypatch
     context_py.write_text(
         context_py.read_text().split('ASSETS = ')[0] + TWO_ASSETS,
     )
-    config, ctx = _setup(fixture_repo)
+    config, ctx = load_workshop(fixture_repo)
     logo = fixture_repo / 'notebooks/assets/logo.png'
     second = fixture_repo / 'notebooks/assets/second.png'
     copyfile = shutil.copyfile
@@ -192,7 +185,7 @@ def test_apply_converges_after_a_partial_asset_failure(fixture_repo, monkeypatch
 
 
 def test_publish_strips_markers_and_generators(fixture_repo):
-    _config, ctx = _setup(fixture_repo)
+    _config, ctx = load_workshop(fixture_repo)
     src = (fixture_repo / 'src/01_example.py').read_text()
     stripped = render.publish(ctx, src, 'src/01_example.py')
     assert '[[[' not in stripped
@@ -201,7 +194,7 @@ def test_publish_strips_markers_and_generators(fixture_repo):
 
 
 def test_publish_rejects_output_that_is_not_a_jupytext_fixed_point(fixture_repo):
-    _config, ctx = _setup(fixture_repo)
+    _config, ctx = load_workshop(fixture_repo)
     # A generator whose output is a bare (uncommented) line inside a markdown
     # cell round-trips to something else, though the cell shape survives.
     bad = (
@@ -217,7 +210,7 @@ def test_publish_rejects_output_that_is_not_a_jupytext_fixed_point(fixture_repo)
 
 
 def test_publish_rejects_a_generator_that_breaks_cell_structure(fixture_repo):
-    _config, ctx = _setup(fixture_repo)
+    _config, ctx = load_workshop(fixture_repo)
     # A cell whose only content is the generator: it reads as code in the
     # source and as nothing at all once the templating is gone, so a cell that
     # participants would see is not the cell the author wrote.
@@ -234,7 +227,7 @@ def test_publish_rejects_a_generator_that_breaks_cell_structure(fixture_repo):
 
 
 def test_publish_rejects_a_generator_that_emits_a_marker(fixture_repo):
-    _config, ctx = _setup(fixture_repo)
+    _config, ctx = load_workshop(fixture_repo)
     # The marker is assembled at generation time so cog sees no marker in the
     # source and strips happily; the strip is only sound if what it leaves is
     # checked, not if cog reports success.
@@ -276,6 +269,6 @@ def test_generator_chatter_never_reaches_stdout(fixture_repo, capsys):
 
 def test_no_files_matched_diagnoses(fixture_repo):
     (fixture_repo / 'src/01_example.py').unlink()
-    config, ctx = _setup(fixture_repo)
+    config, ctx = load_workshop(fixture_repo)
     with pytest.raises(WorkshopifyError, match='matched nothing'):
         render.check(config, ctx)

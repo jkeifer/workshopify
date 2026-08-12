@@ -1,8 +1,9 @@
 import json
 import subprocess
 
-from conftest import git_repo
+from conftest import git_repo, rewrite, uv_lock
 
+from workshopify import build
 from workshopify.cli import main
 
 
@@ -21,10 +22,7 @@ def test_check_clean_after_render(fixture_repo, monkeypatch):
 def test_check_reports_staleness_nonzero(fixture_repo, monkeypatch, capsys):
     monkeypatch.chdir(fixture_repo)
     main(['render'])
-    pyproject = fixture_repo / 'pyproject.toml'
-    pyproject.write_text(
-        pyproject.read_text().replace('greeting = "hello"', 'greeting = "yo"'),
-    )
+    rewrite(fixture_repo, 'greeting = "hello"', 'greeting = "yo"')
     assert main(['check']) == 1
     assert 'stale' in capsys.readouterr().err
 
@@ -98,8 +96,6 @@ def test_a_failure_from_cog_arrives_as_a_diagnostic_too(
 
 def test_worktree_subcommand(fixture_repo, monkeypatch, capsys):
     git_repo(fixture_repo)
-    subprocess.run(['git', 'add', '-A'], cwd=fixture_repo, check=True)
-    subprocess.run(['git', 'commit', '-qm', 'x'], cwd=fixture_repo, check=True)
     monkeypatch.chdir(fixture_repo)
     assert main(['worktree', 'pub']) == 0
     assert (fixture_repo / 'pub' / '.git').exists()
@@ -112,8 +108,6 @@ def test_worktree_subcommand(fixture_repo, monkeypatch, capsys):
 def test_worktree_subcommand_passes_orphan_through(fixture_repo, monkeypatch, capsys):
     """--orphan must reach prepare_worktree: the branch gets no history."""
     git_repo(fixture_repo)
-    subprocess.run(['git', 'add', '-A'], cwd=fixture_repo, check=True)
-    subprocess.run(['git', 'commit', '-qm', 'x'], cwd=fixture_repo, check=True)
     monkeypatch.chdir(fixture_repo)
     assert main(['worktree', 'pages', '--orphan']) == 0
     capsys.readouterr()
@@ -127,16 +121,9 @@ def test_worktree_subcommand_passes_orphan_through(fixture_repo, monkeypatch, ca
     assert result.returncode != 0, 'an orphan worktree starts with no commits'
 
 
-def _committed_repo(fixture_repo):
-    git_repo(fixture_repo)
-    subprocess.run(['git', 'add', '-A'], cwd=fixture_repo, check=True)
-    subprocess.run(['git', 'commit', '-qm', 'x'], cwd=fixture_repo, check=True)
-    return fixture_repo
-
-
 def test_build_publishes_into_the_branch_worktree(fixture_repo, monkeypatch, capsys):
-    _committed_repo(fixture_repo)
-    subprocess.run(['uv', 'lock'], cwd=fixture_repo, check=True)
+    git_repo(fixture_repo)
+    uv_lock(fixture_repo)
     monkeypatch.chdir(fixture_repo)
     assert main(['build']) == 0
     assert (fixture_repo / 'workshop' / 'Dockerfile').is_file()
@@ -163,9 +150,7 @@ def test_build_reports_stale_files_after_the_publish_instructions(
     report exists to catch; it is worth nothing printed above five lines of
     git incantations.
     """
-    from workshopify import build
-
-    _committed_repo(fixture_repo)
+    git_repo(fixture_repo)
     monkeypatch.chdir(fixture_repo)
     # The worktree is branched off HEAD, so everything committed above is
     # tracked there and none of it is written by this stubbed build.
@@ -186,9 +171,7 @@ def test_build_stays_quiet_about_cruft_when_there_is_none(
     capsys,
 ):
     """--clean untracks everything, so the report has nothing to say."""
-    from workshopify import build
-
-    _committed_repo(fixture_repo)
+    git_repo(fixture_repo)
     monkeypatch.chdir(fixture_repo)
     monkeypatch.setattr(build, 'build', lambda config, ctx, staging: set())
 

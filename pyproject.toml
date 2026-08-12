@@ -108,6 +108,12 @@ testpaths = 'tests'
 addopts = ['--cov=workshopify', '--cov-report=term-missing', '--cov-report=xml']
 filterwarnings = ['error']
 
+[tool.coverage.run]
+# A statement that always runs and a branch that never takes one of its two
+# ways read the same without this: line coverage cannot tell an `if` whose
+# false arm nothing exercises from one both arms cover.
+branch = true
+
 [tool.coverage.report]
 show_missing = true
 skip_empty = true
