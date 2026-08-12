@@ -154,26 +154,28 @@ def apply(config: Config, ctx: Context) -> list[Path]:
     every asset source verified to exist before anything is written, so the
     two failures that actually happen -- a typo'd generator, a screenshot
     renamed out from under the context module -- are caught while the tree is
-    still untouched. Both decisions are therefore taken before the first
-    write, in the two lines that open the body. The writes and copies
-    themselves run in sequence, so a permissions error or a full disk partway
-    through leaves the earlier ones applied. Buying atomicity there would mean
-    staging every rendered file and every asset beside its target to guard
-    against failures this rare.
+    still untouched. Both halves therefore name what they will do before
+    either does any of it -- `writes` and `copies` are the whole of the
+    decision, and what is returned is those two rather than a tally kept
+    alongside the doing. The writes and copies themselves run in sequence, so
+    a permissions error or a full disk partway through leaves the earlier ones
+    applied. Buying atomicity there would mean staging every rendered file and
+    every asset beside its target to guard against failures this rare.
 
     Recoverable rather than atomic, then, and that is enough because apply is
     idempotent: it writes only what differs from what it would write, so a
     second run once the cause is cleared applies just the remainder and
     converges. A run with nothing to do writes nothing and returns [].
     """
-    rendered = _rendered(config, ctx)
-    stale = assets.stale(ctx)
-    changed = []
-    for path, text in rendered.items():
-        if fs.read(path) != text:
-            fs.write(path, text)
-            changed.append(path)
-    return changed + assets.apply(stale)
+    writes = {
+        path: text
+        for path, text in _rendered(config, ctx).items()
+        if fs.read(path) != text
+    }
+    copies = assets.stale(ctx)
+    for path, text in writes.items():
+        fs.write(path, text)
+    return [*writes, *assets.apply(copies)]
 
 
 def check(config: Config, ctx: Context) -> list[str]:
