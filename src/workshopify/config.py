@@ -126,6 +126,19 @@ class Config:
     def pyproject(self) -> Path:
         return self.root / 'pyproject.toml'
 
+    def display_path(self, path: Path) -> str:
+        """`path` spelled as a reader of this repo would: relative to the root.
+
+        A path outside the root has no relative spelling that means anything,
+        so it falls back to its own full form. Lives here because `root` does:
+        every caller already holds the Config, and both the strings `check()`
+        builds and the lines the CLI prints must name a file the same way.
+        """
+        try:
+            return str(path.relative_to(self.root))
+        except ValueError:
+            return str(path)
+
     @classmethod
     def _of(cls, root: Path, table: _Table) -> Self:
         """A config from an already-parsed table and the resolved root it came from."""

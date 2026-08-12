@@ -9,7 +9,7 @@ The package is a src-layout library with one command-line surface.
 
 | Module | Responsibility |
 | --- | --- |
-| `config.py` | The declarative half: parses `[tool.workshopify]` into frozen dataclasses. Names the context module but never executes it. |
+| `config.py` | The declarative half: parses `[tool.workshopify]` into frozen dataclasses. Names the context module but never executes it. Owns the repo root, so it also owns the paths derived from it: `pyproject`, and `display_path` for naming a file to a human. |
 | `context.py` | Loads and executes the workshop's context module, yielding the namespace the cog generators run in and the declared `ASSETS` map. |
 | `render.py` | The cog render engine: rendering values in place, checking they are current, and stripping the templating for publication. |
 | `notebooks.py` | `src/*.py` to completed notebooks to exercise notebooks and notes, via jupytext and ipynb-scrubber. |

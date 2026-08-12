@@ -83,17 +83,10 @@ def _rendered(config: Config, namespace: dict) -> dict[Path, str]:
     }
 
 
-def _display(path: Path, root: Path) -> str:
-    try:
-        return str(path.relative_to(root))
-    except ValueError:
-        return str(path)
-
-
 def _asset_errors(config: Config, ctx: Context) -> list[str]:
     errors = []
     for target, source in sorted(ctx.assets.items()):
-        name = _display(target, config.root)
+        name = config.display_path(target)
         if not source.is_file():
             errors.append(f'{source}: missing; cannot check {name}')
         elif not target.is_file():
@@ -136,7 +129,7 @@ def check(config: Config, ctx: Context) -> list[str]:
         current = path.read_text()
         if current == fresh:
             continue
-        name = _display(path, config.root)
+        name = config.display_path(path)
         diff = difflib.unified_diff(
             current.splitlines(),
             fresh.splitlines(),

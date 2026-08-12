@@ -34,6 +34,24 @@ def test_defaults(fixture_repo):
     assert config.pyproject == fixture_repo.resolve() / 'pyproject.toml'
 
 
+def test_display_path_is_relative_inside_the_root_and_absolute_outside(
+    fixture_repo,
+    tmp_path,
+):
+    """The one spelling of a path for a human, used by check() and the CLI alike.
+
+    `generate --output-dir` writes outside the repo, so the fallback is not
+    hypothetical: those paths have no relative spelling that means anything
+    and must be named in full.
+    """
+    config = Config.load(fixture_repo)
+    assert config.display_path(config.root / 'src' / '01_example.py') == (
+        'src/01_example.py'
+    )
+    outside = (tmp_path / 'elsewhere' / 'out.ipynb').resolve()
+    assert config.display_path(outside) == str(outside)
+
+
 def test_load_without_table_diagnoses(tmp_path):
     (tmp_path / 'pyproject.toml').write_text('[project]\nname = "x"\n')
     with pytest.raises(WorkshopifyError, match=r'no \[tool\.workshopify\] table'):

@@ -22,7 +22,7 @@ def _render(args: argparse.Namespace) -> int:
     config = Config.discover()
     changed = render.apply(config, context.load(config))
     for path in changed:
-        print(f'rendered {_rel(path, config.root)}', file=sys.stderr)
+        print(f'rendered {config.display_path(path)}', file=sys.stderr)
     return 0
 
 
@@ -45,7 +45,7 @@ def _generate(args: argparse.Namespace) -> int:
         args.output_dir or config.root,
     )
     for path in written:
-        print(f'wrote {_rel(path, config.root)}', file=sys.stderr)
+        print(f'wrote {config.display_path(path)}', file=sys.stderr)
     return 0
 
 
@@ -107,7 +107,7 @@ def _set(args: argparse.Namespace) -> int:
     config = Config.discover()
     changed = params.set_param(config.root, args.key, args.value)
     for path in changed:
-        print(f'updated {_rel(path, config.root)}', file=sys.stderr)
+        print(f'updated {config.display_path(path)}', file=sys.stderr)
     print(f'set {args.key} = {args.value!r}', file=sys.stderr)
     return 0
 
@@ -122,13 +122,6 @@ def _worktree(args: argparse.Namespace) -> int:
     # piped; the notes above are commentary and stay on stderr.
     print(prepared.path)
     return 0
-
-
-def _rel(path: Path, root: Path) -> str:
-    try:
-        return str(path.relative_to(root))
-    except ValueError:
-        return str(path)
 
 
 def _parser() -> argparse.ArgumentParser:
