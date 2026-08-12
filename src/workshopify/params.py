@@ -18,6 +18,7 @@ pyproject.toml claiming a value nothing could be rendered from.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -78,7 +79,23 @@ def _coerced(key: str, value: str, current: Any) -> Any:
     )
 
 
-def set_param(config: Config, key: str, value: str) -> list[Path]:
+@dataclass(frozen=True)
+class Rewritten:
+    """What a `set` landed: the value as recorded, and the files re-rendered.
+
+    The value comes back because the caller cannot derive it: `_coerced` is
+    what decides that `9090` is an int and not the string argv handed over,
+    and a CLI reporting the raw argument would claim `set port = '9090'` for
+    a file now reading `port = 9090` -- restating as text the retyping this
+    module exists to prevent. Reported rather than printed, like every other
+    result here, so `cli.py` stays the only place output happens.
+    """
+
+    value: Any
+    paths: list[Path]
+
+
+def set_param(config: Config, key: str, value: str) -> Rewritten:
     if key not in config.params:
         available = ', '.join(sorted(config.params)) or '(none defined)'
         raise WorkshopifyError(
@@ -101,7 +118,7 @@ def set_param(config: Config, key: str, value: str) -> list[Path]:
         # must see the value just written, not the one this call started from.
         fresh = Config.load(config.root)
         ctx = context.load(fresh)
-        return render.apply(fresh, ctx)
+        return Rewritten(coerced, render.apply(fresh, ctx))
     except Exception:
         config.pyproject.write_text(original)
         raise

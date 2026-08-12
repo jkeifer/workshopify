@@ -105,10 +105,12 @@ def _stale_report(stale: list[Path]) -> None:
 
 
 def _set(args: argparse.Namespace, config: Config) -> int:
-    changed = params.set_param(config, args.key, args.value)
+    rewritten = params.set_param(config, args.key, args.value)
     _err(
-        *(f'updated {config.display_path(path)}' for path in changed),
-        f'set {args.key} = {args.value!r}',
+        *(f'updated {config.display_path(path)}' for path in rewritten.paths),
+        # The recorded value, not the argument: they differ in type whenever
+        # the param is not a string, and the file now holds the former.
+        f'set {args.key} = {rewritten.value!r}',
     )
     return 0
 

@@ -35,13 +35,13 @@ def _typed(fixture_repo, line):
 
 
 def test_set_rewrites_the_param_and_rerenders(fixture_repo):
-    changed = set_param(Config.load(fixture_repo), 'greeting', 'kia ora')
+    rewritten = set_param(Config.load(fixture_repo), 'greeting', 'kia ora')
     text = (fixture_repo / 'pyproject.toml').read_text()
     assert 'greeting = "kia ora"' in text
     src = (fixture_repo / 'src/01_example.py').read_text()
     assert 'word = "kia ora"' in src
     assert '# KIA ORA' in src
-    assert any(p.name == '01_example.py' for p in changed)
+    assert any(p.name == '01_example.py' for p in rewritten.paths)
 
 
 def test_set_preserves_pyproject_comments(fixture_repo):
@@ -117,12 +117,15 @@ def test_set_rolls_back_only_the_param_when_a_later_write_fails(
 
 def test_set_coerces_to_the_type_the_param_already_has(fixture_repo):
     config = _typed(fixture_repo, 'port = 8080\ndebug = false')
-    set_param(config, 'port', '9090')
-    set_param(Config.load(fixture_repo), 'debug', 'yes')
+    port = set_param(config, 'port', '9090')
+    debug = set_param(Config.load(fixture_repo), 'debug', 'yes')
     params = Config.load(fixture_repo).params
     assert params['port'] == 9090
     assert params['debug'] is True
     assert 'port = 9090' in (fixture_repo / 'pyproject.toml').read_text()
+    # What the CLI reports is the recorded value, not the argv it was given:
+    # reporting the latter would spell an int param back as a string.
+    assert (port.value, debug.value) == (9090, True)
 
 
 def test_set_refuses_a_value_of_the_wrong_type(fixture_repo):
