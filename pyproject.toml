@@ -10,7 +10,7 @@ license-files = ['LICENSE']
 requires-python = '>=3.14'
 dependencies = [
     'cogapp>=3.5.1',
-    'ipynb-scrubber>=0.4.1',
+    'ipynb-scrubber>=0.5.0',
     'jupytext>=1.19.4',
     'tomlkit>=0.13.2',
 ]

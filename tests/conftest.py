@@ -45,6 +45,9 @@ notebook_metadata_filter = "-all"
 cell_metadata_filter = "tags,-all"
 
 [tool.ipynb-scrubber.options]
+# Mirrors the real workshop: a cleared cell keeps only its "(See notes: ...)"
+# reference. Here so the fixture exercises an empty clear-text at all, which
+# is the setting a scrubber upgrade is most likely to reinterpret.
 clear-text = ""
 
 [[tool.ipynb-scrubber.files]]
@@ -72,8 +75,8 @@ SRC = """\
 # HELLO
 # <!--[[[end]]]-->
 
-# %% tags=["scrub-note"]
-#| scrub-note: tags=["scrub-note"]
+# %%
+#| scrub-note: example-note
 # a note that lands in the notes file
 
 # %% tags=["scrub-clear"]
