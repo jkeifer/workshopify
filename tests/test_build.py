@@ -272,6 +272,40 @@ def test_every_copy_takes_its_mode_from_the_source(fixture_repo, tmp_path):
         assert (tmp_path / name).stat().st_mode & 0o777 == 0o755, name
 
 
+def test_two_sources_writing_one_path_are_refused(fixture_repo, tmp_path):
+    """One published path, two things claiming it, and no way to have both.
+
+    An ASSETS target that is also an include entry used to be a build that
+    reported success: the report was collapsed to a set, so one path written
+    twice and one path written once were the same answer, and what shipped
+    was whichever step happened to run second. Both spellings are named,
+    because reconciling them is the fix and neither one alone locates it.
+    """
+    (fixture_repo / 'setup.sh').write_text('#!/bin/sh\n')
+    ctx_py = fixture_repo / 'context.py'
+    ctx_py.write_text(ctx_py.read_text() + "ASSETS['setup.sh'] = 'assets/logo.png'\n")
+    _set_include(fixture_repo, 'setup.sh')
+    uv_lock(fixture_repo)
+    config, ctx = load_workshop(fixture_repo)
+    with pytest.raises(WorkshopifyError) as e:
+        build.build(config, ctx, tmp_path)
+    assert "include entry 'setup.sh'" in str(e.value)
+    assert 'asset setup.sh' in str(e.value)
+
+
+def test_the_same_include_entry_twice_is_not_a_collision(fixture_repo, tmp_path):
+    """Repetition is not contradiction: both writes put the same bytes there.
+
+    The check is for two *sources* disagreeing over one path, so a config
+    that names one entry twice must still build -- it did before, and there
+    is nothing for an author to reconcile.
+    """
+    _set_include(fixture_repo, 'Dockerfile', 'Dockerfile')
+    uv_lock(fixture_repo)
+    config, ctx = load_workshop(fixture_repo)
+    assert Path('Dockerfile') in build.build(config, ctx, tmp_path)
+
+
 def test_a_repo_with_no_static_directory_builds(fixture_repo, tmp_path):
     """The overlay is optional; a repo without one is not a build failure."""
     shutil.rmtree(fixture_repo / 'static')

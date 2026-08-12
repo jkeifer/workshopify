@@ -72,7 +72,11 @@ The package is a src-layout library with one command-line surface.
   drift apart. The build subtracts that set from the published branch's
   tracked files to catch a renamed exercise still shipping its old file, so a
   file written but unreported is accused of being cruft on every build, and
-  `--clean` can never resolve it.
+  `--clean` can never resolve it. The report also carries *what* wrote each
+  path, right up to the set it finally becomes, because a published path has
+  exactly one source: an `ASSETS` target that is also an `include` entry is a
+  config error, and a set of paths alone cannot tell it from a path written
+  once.
 
 ## Known rough edges
 

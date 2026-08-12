@@ -76,6 +76,42 @@ def _include_source(config: Config, name: str) -> Path:
     return source
 
 
+def _by(paths: list[Path], source: str) -> list[tuple[Path, str]]:
+    """`paths`, each carrying the name of what put it in the tree."""
+    return [(path, source) for path in paths]
+
+
+def _targets(written: list[tuple[Path, str]], staging: Path) -> set[Path]:
+    """The tree's paths, refusing any that two different sources both write.
+
+    A published path has one source. Nothing enforced that: an `ASSETS`
+    target and an `include` entry naming the same file, or a `static/` overlay
+    and an include, both wrote it -- and collapsing the report to a set made
+    two sources writing one path identical to one source writing it once. The
+    build then reported success for a tree in which whichever step ran second
+    silently determined what ships.
+
+    That makes it the one report/reality drift this module did not check,
+    which is why the credit is carried this far rather than being dropped at
+    each step: knowing a path was written twice is useless without knowing by
+    what, and by then the spellings the author would have to reconcile are
+    gone. The same entry named twice is not a collision -- it writes the same
+    bytes from the same place, and is the config being repetitive rather than
+    contradictory.
+    """
+    targets: dict[Path, str] = {}
+    for path, source in written:
+        relative = path.relative_to(staging)
+        rival = targets.setdefault(relative, source)
+        if rival != source:
+            raise WorkshopifyError(
+                f'error: {rival} and {source} both write {relative} to the '
+                f'published tree; whichever runs second is what ships, so '
+                f'this build has no one answer. Rename or drop one of them.',
+            )
+    return set(targets)
+
+
 def build(config: Config, ctx: Context, staging: Path) -> set[Path]:
     """Assemble the complete published tree. Returns paths relative to staging."""
     # No mkdir: every path into staging goes through `fs.write` or `fs.copy`,
@@ -84,26 +120,33 @@ def build(config: Config, ctx: Context, staging: Path) -> set[Path]:
     # notebooks.generate resolves its output dir, so the paths it reports back
     # are resolved; match that here or relative_to below fails.
     staging = staging.resolve()
-    written: list[Path] = []
+    written: list[tuple[Path, str]] = []
 
     for name in config.build.include:
-        written += _copy(_include_source(config, name), staging / name)
+        source = _include_source(config, name)
+        written += _by(_copy(source, staging / name), f'include entry {name!r}')
 
     static_dir = config.root / 'static'
     if static_dir.is_dir():
         for source in (p for p in fs.glob(static_dir, '**/*') if p.is_file()):
-            written += _copy(source, staging / source.relative_to(static_dir))
+            written += _by(
+                _copy(source, staging / source.relative_to(static_dir)),
+                'the static/ overlay',
+            )
 
     # context.load already refuses a target outside the root, so this is the
     # same question asked of a Context that came from somewhere else.
     for target, source in sorted(ctx.assets.items()):
-        written += _copy(source, config.rebase(target, staging, 'asset target'))
+        written += _by(
+            _copy(source, config.rebase(target, staging, 'asset target')),
+            f'asset {config.display_path(target)}',
+        )
 
-    written += notebooks.generate(config, ctx, staging)
+    written += _by(notebooks.generate(config, ctx, staging), 'the generated notebooks')
 
-    written += deps.write_deps(config, staging)
+    written += _by(deps.write_deps(config, staging), 'the derived pyproject and lock')
 
-    return {p.relative_to(staging) for p in written}
+    return _targets(written, staging)
 
 
 def unwritten(target: Path, written: set[Path]) -> list[Path]:
