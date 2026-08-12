@@ -17,7 +17,9 @@ The package is a src-layout library with one command-line surface.
 | `build.py` | Assembles the published tree from every source of files, and publishes it into a worktree. |
 | `worktree.py` | Owns the branch worktree a build publishes into: prepares it, and reports on or empties an already-prepared one. |
 | `params.py` | Rewrites `[tool.workshopify.params]` values in pyproject.toml. |
-| `git.py` | The single git subprocess helper. |
+| `git.py` | git's argv and cwd, over `proc.py`. Nothing else spells `git`. |
+| `fs.py` | The filesystem boundary: every read, write, copy, and listing the package does. Owns "mode is the source's" and "text is UTF-8". |
+| `proc.py` | The subprocess boundary: the one `subprocess.run`, for git and uv alike. |
 | `errors.py` | `WorkshopifyError`, and `diagnosed` -- the boundary that turns a foreign failure into one. |
 | `cli.py` | The only place a failure becomes a process exit. |
 
@@ -30,10 +32,20 @@ The package is a src-layout library with one command-line surface.
   only holds where the package meets code that does not know it exists: the
   filesystem, subprocesses, cog. Those calls go through `errors.diagnosed`,
   which restates `OSError`, `subprocess.SubprocessError`, and whatever else a
-  given boundary owns as a `WorkshopifyError`. A new `subprocess.run`, `open`,
-  `copy`, or third-party entry point wants that wrapper; without it a missing
-  lockfile or a typo'd generator reaches the user as a traceback. The one
-  exception is a bug in this package rather than in a workshop -- an
+  given boundary owns as a `WorkshopifyError`. Two of those boundaries are
+  modules rather than a convention -- `fs.py` and `proc.py` -- so the wrapper
+  is written once and reached through, not restated per call site. Nothing
+  else may import `shutil` or `subprocess`: ruff's `banned-api` says so, which
+  is what makes this half enforced. The rest is still convention, honestly:
+  ruff cannot see a bare `Path.read_text`, so a new read that skips `fs.py`
+  will lint clean and reach the user as a traceback. A third-party entry point
+  owns its own exception type and hands it to `diagnosed` at the call site --
+  cog's in `render._run`, tomlkit's and tomllib's where a pyproject is parsed,
+  jupytext's config error in `notebooks.generate`, the scrubber's in its own
+  `try`. That list is exhaustive on purpose: `jupytext.reads`/`writes` are
+  **not** wrapped, because they run over text `render.publish` has already
+  validated. Adding a call to one of them means deciding which it is. The one
+  deliberate exception is a bug in this package rather than in a workshop: an
   unreadable config annotation raises `TypeError`, because no author can
   provoke it and none can fix it.
 - **Nothing below `cli.py` writes to stdout or stderr.** Every module returns
@@ -49,8 +61,10 @@ The package is a src-layout library with one command-line surface.
   byte-identical file and a publish diff contains only real changes. This is
   why the cog namespace is deep-copied per file (a generator that mutates a
   context value must not change what the next file, or the next run, renders)
-  and why every copy sets the source's mode (`shutil.copy`, never
-  `copyfile`, which inherits an existing destination's).
+  and why `fs.py` -- through which every copy and every text file goes -- sets
+  the mode from the source (`shutil.copy`, never `copyfile`, which inherits an
+  existing destination's) and pins text to UTF-8 (so what a build produces
+  does not depend on the locale of the machine that ran it).
 - **A writing step reports what it wrote**, derived from what it actually
   wrote rather than from a glob of the output directory -- and the report is
   produced by the same traversal that does the writing, so the two cannot

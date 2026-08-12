@@ -70,6 +70,7 @@ select = [
     'S',
     'SIM',
     'T20',
+    'TID',
     'UP',
     'W',
 ]
@@ -87,15 +88,27 @@ ignore = [
 # computed and lets `cli.py` render it. This is the only sanctioned T201, and
 # it is what makes that invariant enforced rather than merely documented.
 'src/workshopify/cli.py' = ['T201']
-# `uv` is invoked by name so the lock is derived with the user's own uv.
-'src/workshopify/deps.py' = ['S607']
-# `git` is invoked by name so the user's git (version, config, credential
-# helpers) is the one that runs; resolving an absolute path would defeat that.
-# The argument lists are constructed here, never taken from user input.
-'src/workshopify/git.py' = ['S603', 'S607']
-# Tests assert (S101), shell out to `git` by name to build fixture repos
-# (S603/S607), and are an intentionally unpackaged directory (INP001).
-'tests/**/*' = ['S101', 'S603', 'S607', 'INP001']
+# The two boundary modules, and the only places allowed to import what they
+# wrap -- see flake8-tidy-imports.banned-api below. `proc.py` runs `git` and
+# `uv` by name so the user's own (version, config, credential helpers) are the
+# ones that run; resolving an absolute path would defeat that, and the
+# argument lists are constructed by this package, never taken from user input.
+'src/workshopify/fs.py' = ['TID251']
+'src/workshopify/proc.py' = ['S603', 'S607', 'TID251']
+# Tests assert (S101), shell out to `git` by name and reach for shutil to
+# build and perturb fixture repos (S603/S607/TID251), and are an
+# intentionally unpackaged directory (INP001).
+'tests/**/*' = ['S101', 'S603', 'S607', 'TID251', 'INP001']
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+# What `fs.py` and `proc.py` exist to state is only stated once if nothing
+# else can reach past them. Both invariants below were documented and broken
+# in the same tree before this: two hand-rolled `subprocess.run` wrappers that
+# had already drifted, and two `shutil.copyfile` calls under a CLAUDE.md that
+# says "never copyfile". Ruff cannot see a bare `Path.read_text`, so the
+# diagnose-every-read half of `fs.py` stays convention.
+'shutil'.msg = 'copy files through workshopify.fs, which sets the source mode'
+'subprocess'.msg = 'run subprocesses through workshopify.proc, which diagnoses them'
 
 [tool.ruff.lint.isort]
 lines-between-types = 1

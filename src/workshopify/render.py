@@ -32,7 +32,6 @@ from __future__ import annotations
 import copy
 import difflib
 import io
-import shutil
 
 from contextlib import redirect_stdout
 from enum import Enum, auto
@@ -44,6 +43,7 @@ import jupytext
 from cogapp import Cog
 from cogapp.cogapp import CogError
 
+from workshopify import fs
 from workshopify.config import Config
 from workshopify.context import Context
 from workshopify.errors import WorkshopifyError, diagnosed
@@ -123,7 +123,9 @@ def _run(text: str, namespace: dict[str, Any], fname: str, *, delete_code: bool)
 
 def _files(config: Config) -> list[Path]:
     files = sorted(
-        path for pattern in config.render.files for path in config.root.glob(pattern)
+        path
+        for pattern in config.render.files
+        for path in fs.glob(config.root, pattern)
     )
     if not files:
         raise WorkshopifyError(
@@ -136,7 +138,7 @@ def _files(config: Config) -> list[Path]:
 def _rendered(config: Config, ctx: Context) -> dict[Path, str]:
     """Every configured file re-rendered, in memory, none written."""
     return {
-        path: _run(path.read_text(), ctx.namespace, str(path), delete_code=False)
+        path: _run(fs.read(path), ctx.namespace, str(path), delete_code=False)
         for path in _files(config)
     }
 
@@ -160,7 +162,7 @@ def _asset_problem(target: Path, source: Path) -> AssetProblem | None:
         return AssetProblem.NO_SOURCE
     if not target.is_file():
         return AssetProblem.NOT_COPIED
-    if target.read_bytes() != source.read_bytes():
+    if fs.read_bytes(target) != fs.read_bytes(source):
         return AssetProblem.DIFFERS
     return None
 
@@ -226,14 +228,13 @@ def apply(config: Config, ctx: Context) -> list[Path]:
         )
     changed = []
     for path, text in rendered.items():
-        if path.read_text() != text:
-            path.write_text(text)
+        if fs.read(path) != text:
+            fs.write(path, text)
             changed.append(path)
     # Every remaining problem is one a copy fixes: NO_SOURCE was the only kind
     # apply treats as an error, and it has already raised.
     for target, source, _ in problems:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(source, target)
+        fs.copy(source, target)
         changed.append(target)
     return changed
 
@@ -242,7 +243,7 @@ def check(config: Config, ctx: Context) -> list[str]:
     """Error strings for every stale rendered file and every wrong asset."""
     errors = []
     for path, fresh in _rendered(config, ctx).items():
-        current = path.read_text()
+        current = fs.read(path)
         if current == fresh:
             continue
         name = config.display_path(path)

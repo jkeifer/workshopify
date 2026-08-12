@@ -24,7 +24,9 @@ from typing import Any
 
 import tomlkit
 
-from workshopify import context, render
+from tomlkit.exceptions import ParseError
+
+from workshopify import context, fs, render
 from workshopify.config import Config
 from workshopify.errors import WorkshopifyError, diagnosed
 
@@ -107,10 +109,11 @@ def set_param(config: Config, key: str, value: str) -> Rewritten:
     # without a rewrite to undo.
     coerced = _coerced(key, value, config.params[key])
 
-    original = config.pyproject.read_text()
-    doc = tomlkit.parse(original)
+    original = fs.read(config.pyproject)
+    with diagnosed(f'parsing {config.pyproject}', ParseError):
+        doc = tomlkit.parse(original)
     doc['tool']['workshopify']['params'][key] = coerced
-    config.pyproject.write_text(tomlkit.dumps(doc))
+    fs.write(config.pyproject, tomlkit.dumps(doc))
 
     try:
         # Deliberately re-read rather than reuse the Config passed in: the
@@ -119,6 +122,20 @@ def set_param(config: Config, key: str, value: str) -> Rewritten:
         fresh = Config.load(config.root)
         ctx = context.load(fresh)
         return Rewritten(coerced, render.apply(fresh, ctx))
-    except Exception:
-        config.pyproject.write_text(original)
+    except Exception as failure:
+        # The rollback is itself a write, and it runs while another failure is
+        # already unwinding -- so if it fails too, the one thing that must not
+        # happen is that it replaces the failure it was undoing. Reporting only
+        # the rollback's own error would leave the user reading about a full
+        # disk with no idea what the `set` had been doing, and no statement of
+        # the one fact that now matters: pyproject.toml still holds the new
+        # value. Both, in that order, or the original alone.
+        try:
+            fs.write(config.pyproject, original)
+        except WorkshopifyError as rollback_failed:
+            raise WorkshopifyError(
+                f'{failure}\n'
+                f'error: and {key!r} could not be put back, so pyproject.toml '
+                f'still records {coerced!r}:\n{rollback_failed}',
+            ) from failure
         raise

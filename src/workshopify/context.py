@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from workshopify import fs
 from workshopify.config import Config
 from workshopify.errors import WorkshopifyError
 
@@ -39,7 +40,7 @@ def load(config: Config) -> Context:
     directory = str(path.parent)
     sys.path.insert(0, directory)
     try:
-        exec(compile(path.read_text(), str(path), 'exec'), namespace)  # noqa: S102
+        exec(compile(fs.read(path), str(path), 'exec'), namespace)  # noqa: S102
     except WorkshopifyError:
         raise
     except Exception as e:

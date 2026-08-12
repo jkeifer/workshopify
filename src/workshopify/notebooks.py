@@ -39,11 +39,16 @@ from pathlib import Path
 import jupytext
 
 from ipynb_scrubber import FileEntry, ProjectConfig, ScrubberError, scrub_parsed
-from jupytext.config import JupytextConfiguration, load_jupytext_configuration_file
+from jupytext.config import (
+    JupytextConfiguration,
+    JupytextConfigurationError,
+    load_jupytext_configuration_file,
+)
 
+from workshopify import fs
 from workshopify.config import Config
 from workshopify.context import Context
-from workshopify.errors import WorkshopifyError
+from workshopify.errors import WorkshopifyError, diagnosed
 from workshopify.render import publish
 
 # nbformat validates a cell id against ^[a-zA-Z0-9-_]+$, 1 to 64 characters.
@@ -106,18 +111,6 @@ def _id_stem(stem: str) -> str:
     return f'{legal[: _ID_STEM_MAX - len(digest) - 1]}-{digest}'
 
 
-def _write(path: Path, text: str) -> None:
-    """Write `text` to `path` verbatim, creating the directory it lands in.
-
-    Nothing is appended, because this serves both kinds of output and only one
-    of them needs it: `jupytext.writes` omits the trailing newline, so its two
-    callers add one, while the rendered notes document already terminates
-    itself and would gain a blank line.
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text)
-
-
 def _render(
     config: Config,
     ctx: Context,
@@ -139,7 +132,7 @@ def _render(
     if not src_py.exists():
         raise WorkshopifyError(f'error: missing source file {src_py}')
 
-    published = publish(ctx, src_py.read_text(), str(src_py))
+    published = publish(ctx, fs.read(src_py), str(src_py))
     notebook = jupytext.reads(published, fmt='py:percent', config=jt_config)
     # Cell ids are derived from the notebook stem and cell index. nbformat
     # mints a random uuid4 per cell, so without this a plain render rewrites
@@ -154,7 +147,10 @@ def _render(
     # scrubber then consumes. It is written first because the scrub result
     # shallow-shares every node it left alone with this notebook, so the two
     # must not be built in an order that lets one reach into the other.
-    _write(entry.input, jupytext.writes(notebook, fmt='ipynb', config=jt_config) + '\n')
+    fs.write(
+        entry.input,
+        jupytext.writes(notebook, fmt='ipynb', config=jt_config) + '\n',
+    )
 
     # The scrubber reports a bad marker against the cell it sits in, which is
     # the one thing this can fail on that the author can fix. Naming the .py
@@ -165,7 +161,7 @@ def _render(
     except ScrubberError as e:
         raise WorkshopifyError(f'error: {src_py}: {e}') from e
 
-    _write(
+    fs.write(
         entry.output,
         jupytext.writes(result.notebook, fmt='ipynb', config=jt_config) + '\n',
     )
@@ -177,7 +173,7 @@ def _render(
             f'error: {entry.input} has {result.note_count} cell(s) marked '
             f'"{entry.options.note_tag}" but no notes-file is configured',
         )
-    _write(entry.notes_file, result.notes_text)
+    fs.write(entry.notes_file, result.notes_text)
     return entry.notes_file
 
 
@@ -203,7 +199,12 @@ def generate(config: Config, ctx: Context, output_dir: Path) -> list[Path]:
     # CLI discovers it. Without it the cell metadata filter that keeps
     # `raises-exception` tags falls back to defaults. Read once here rather
     # than per notebook: one pyproject cannot answer two of them differently.
-    jt_config = load_jupytext_configuration_file(str(config.pyproject))
+    #
+    # A typo'd key here is the same authoring mistake as a typo'd
+    # [tool.workshopify] one, and jupytext reports it as a ValueError subclass
+    # -- which `diagnosed` does not catch unless this boundary hands it in.
+    with diagnosed(f'reading {config.pyproject}', JupytextConfigurationError):
+        jt_config = load_jupytext_configuration_file(str(config.pyproject))
 
     written: list[Path] = []
     for configured in project.files:

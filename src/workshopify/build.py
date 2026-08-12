@@ -10,15 +10,13 @@ work and a cruft report for tracked files no build wrote.
 
 from __future__ import annotations
 
-import shutil
-
 from dataclasses import dataclass
 from pathlib import Path
 
-from workshopify import deps, notebooks, worktree
+from workshopify import deps, fs, notebooks, worktree
 from workshopify.config import Config
 from workshopify.context import Context
-from workshopify.errors import WorkshopifyError, diagnosed
+from workshopify.errors import WorkshopifyError
 from workshopify.git import git
 
 
@@ -38,23 +36,19 @@ def _copy(source: Path, dest: Path) -> list[Path]:
     never wrote would be reported as written and hidden from that same cruft
     check.
 
-    `shutil.copy` rather than `copyfile` because copyfile leaves an existing
-    destination's own mode alone and mints a fresh one from the umask
-    otherwise: a `setup.sh` shipped executable from a directory include but
-    not as a single file, and byte-identical content took a different git mode
-    on a rebuild into a reused worktree than in a fresh one. Mode is the
-    source's, on every path through here.
+    The leaf copy is `fs.copy` and the listing is `fs.glob`, which is where
+    "mode is the source's" and "a failed listing is a diagnostic" are stated;
+    what this function adds is only the traversal and the report. Both steps
+    carry their own diagnostic, so there is nothing left here to wrap.
     """
-    with diagnosed(f'copying {source} to {dest}'):
-        if not source.is_dir():
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy(source, dest)
-            return [dest]
-        return [
-            written
-            for child in sorted(source.iterdir())
-            for written in _copy(child, dest / child.name)
-        ]
+    if not source.is_dir():
+        fs.copy(source, dest)
+        return [dest]
+    return [
+        written
+        for child in fs.glob(source, '*')
+        for written in _copy(child, dest / child.name)
+    ]
 
 
 def _include_source(config: Config, name: str) -> Path:
@@ -84,7 +78,9 @@ def _include_source(config: Config, name: str) -> Path:
 
 def build(config: Config, ctx: Context, staging: Path) -> set[Path]:
     """Assemble the complete published tree. Returns paths relative to staging."""
-    staging.mkdir(parents=True, exist_ok=True)
+    # No mkdir: every path into staging goes through `fs.write` or `fs.copy`,
+    # both of which create the directory they land in.
+    #
     # notebooks.generate resolves its output dir, so the paths it reports back
     # are resolved; match that here or relative_to below fails.
     staging = staging.resolve()
@@ -95,7 +91,7 @@ def build(config: Config, ctx: Context, staging: Path) -> set[Path]:
 
     static_dir = config.root / 'static'
     if static_dir.is_dir():
-        for source in sorted(p for p in static_dir.rglob('*') if p.is_file()):
+        for source in (p for p in fs.glob(static_dir, '**/*') if p.is_file()):
             written += _copy(source, staging / source.relative_to(static_dir))
 
     # context.load already refuses a target outside the root, so this is the

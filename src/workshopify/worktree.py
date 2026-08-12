@@ -12,7 +12,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from workshopify.errors import WorkshopifyError, diagnosed
+from workshopify import fs
+from workshopify.errors import WorkshopifyError
 from workshopify.git import git, succeeds
 
 
@@ -119,9 +120,7 @@ def _require_free(path: Path, worktrees: dict[Path, str | None], branch: str) ->
     # the repo root -- `<repo>/workshop` -- which some repo already uses.
     if not path.is_dir():
         raise WorkshopifyError(f'error: {path} exists and is not a directory')
-    with diagnosed(f'reading {path}'):
-        occupied = any(path.iterdir())
-    if occupied:
+    if fs.glob(path, '*'):
         raise WorkshopifyError(f'error: {path} exists and is not empty')
 
 

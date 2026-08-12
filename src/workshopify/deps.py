@@ -9,15 +9,15 @@ the versions contributors actually develop against.
 
 from __future__ import annotations
 
-import shutil
-import subprocess
-
 from collections.abc import MutableMapping
 from pathlib import Path
 from typing import Any
 
 import tomlkit
 
+from tomlkit.exceptions import ParseError
+
+from workshopify import fs, proc
 from workshopify.config import Config
 from workshopify.errors import WorkshopifyError, diagnosed
 
@@ -111,7 +111,10 @@ def derive_pyproject(text: str, keep: tuple[str, ...], drop: tuple[str, ...]) ->
     path listed with one of its own descendants is an error for the same
     reason -- see `_paths`.
     """
-    doc = tomlkit.parse(text)
+    # Named for the text it was given, not a path: this takes a document to
+    # transform, and the file it came from is the caller's to know.
+    with diagnosed('parsing the source pyproject.toml', ParseError):
+        doc = tomlkit.parse(text)
     _keep_only(doc, _paths(keep, 'keep'))
     _drop_all(doc, _paths(drop, 'drop'))
     return tomlkit.dumps(doc)
@@ -124,7 +127,7 @@ def write_deps(config: Config, staging: Path) -> list[Path]:
     it is a derivation of that lock rather than an independent resolution:
     participants get exactly the versions contributors develop against, and
     the build needs no network. So a repo that never ran `uv lock` has nothing
-    to derive from, and is told so in those words: left to `copyfile` it is an
+    to derive from, and is told so in those words: left to the copy it is an
     ENOENT on a path the author never chose to write, naming neither the state
     nor the one command that fixes it.
 
@@ -141,32 +144,15 @@ def write_deps(config: Config, staging: Path) -> list[Path]:
 
     pyproject = staging / 'pyproject.toml'
     lock = staging / 'uv.lock'
-    with diagnosed(f'writing {pyproject}'):
-        pyproject.write_text(
-            derive_pyproject(
-                config.pyproject.read_text(),
-                config.build.keep_tables,
-                config.build.drop_keys,
-            ),
-        )
-    with diagnosed(f'copying {seed} to {lock}'):
-        shutil.copyfile(seed, lock)
-
-    # uv's stderr is the diagnostic when it ran and refused; `diagnosed` has
-    # the other failure, a `uv` that is not on PATH at all -- which is every
-    # install of workshopify that did not come from uv itself.
-    with diagnosed(f'running uv lock --offline in {staging}'):
-        try:
-            subprocess.run(
-                ['uv', 'lock', '--offline'],
-                cwd=staging,
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-        except subprocess.CalledProcessError as e:
-            raise WorkshopifyError(
-                f'error: uv lock --offline failed in {staging}:\n{e.stderr}',
-            ) from e
+    fs.write(
+        pyproject,
+        derive_pyproject(
+            fs.read(config.pyproject),
+            config.build.keep_tables,
+            config.build.drop_keys,
+        ),
+    )
+    fs.copy(seed, lock)
+    proc.run(['uv', 'lock', '--offline'], staging)
 
     return [pyproject, lock]

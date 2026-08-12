@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import subprocess
-
 from collections.abc import Iterator
 from contextlib import contextmanager
 
@@ -29,12 +27,13 @@ def diagnosed(what: str, *also: type[BaseException]) -> Iterator[None]:
     invariant is enforced -- once, at each boundary -- rather than restated as
     a bespoke `try` in every module that has one.
 
-    `OSError` and `subprocess.SubprocessError` are caught everywhere because
-    every boundary can raise them. Anything else a particular boundary owns is
-    passed in by that caller, which keeps its library out of this module:
-    `render` hands in cog's error, and nothing else has to know cog exists.
+    `OSError` is caught everywhere because every boundary can raise it.
+    Anything else a particular boundary owns is passed in by that caller,
+    which keeps its library out of this module: `render` hands in cog's error,
+    `fs` its decode errors, `proc` its `SubprocessError`, and nothing else has
+    to know any of them exist.
     """
     try:
         yield
-    except (OSError, subprocess.SubprocessError, *also) as e:
+    except (OSError, *also) as e:
         raise WorkshopifyError(f'error: {what}: {e}') from e

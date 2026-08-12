@@ -230,3 +230,18 @@ def test_params_keys_are_arbitrary(fixture_repo):
         'greeting': 'hello',
         'branch': 'not a build key',
     }
+
+
+def test_a_malformed_pyproject_is_diagnosed(fixture_repo):
+    """A typo in the one file this tool is configured from, not a traceback.
+
+    tomllib raises TOMLDecodeError, which is a ValueError -- a class
+    `diagnosed` does not catch unless the boundary that owns it hands it in.
+    Without that, the likeliest mistake any workshop author makes arrived as a
+    traceback out of a CLI whose only rule is that failures are diagnostics.
+    """
+    (fixture_repo / 'pyproject.toml').write_text('[tool.workshopify\nx = 1\n')
+    # `parsing`, not `reading`: the read succeeded, and a diagnostic that
+    # cannot tell the two apart sends the author looking at permissions.
+    with pytest.raises(WorkshopifyError, match=r'parsing .*pyproject\.toml'):
+        Config.load(fixture_repo)

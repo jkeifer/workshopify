@@ -18,7 +18,8 @@ from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Self, get_type_hints
 
-from workshopify.errors import WorkshopifyError
+from workshopify import fs
+from workshopify.errors import WorkshopifyError, diagnosed
 
 if TYPE_CHECKING:
     # The only spelling of "a dataclass, as a type" that a checker accepts;
@@ -129,9 +130,17 @@ def _sub[T: DataclassInstance](parent: _Table, name: str, target: type[T]) -> T:
 
 
 def _workshopify(pyproject: Path) -> _Table | None:
-    """The [tool.workshopify] table of a pyproject, or None if it has none."""
-    with pyproject.open('rb') as f:
-        return tomllib.load(f).get('tool', {}).get('workshopify')
+    """The [tool.workshopify] table of a pyproject, or None if it has none.
+
+    A malformed pyproject.toml is the likeliest mistake a workshop author will
+    make, in the one file this tool is configured from, so its decode error is
+    handed to `diagnosed` explicitly: TOMLDecodeError is a ValueError, which
+    `diagnosed` does not catch by default and must not be widened to.
+    """
+    text = fs.read(pyproject)
+    with diagnosed(f'parsing {pyproject}', tomllib.TOMLDecodeError):
+        table = tomllib.loads(text)
+    return table.get('tool', {}).get('workshopify')
 
 
 @dataclass(frozen=True)

@@ -1,3 +1,4 @@
+import os
 import shutil
 
 from pathlib import Path
@@ -6,7 +7,7 @@ import pytest
 
 from conftest import load_workshop, rewrite
 
-from workshopify import render
+from workshopify import fs, render
 from workshopify.errors import WorkshopifyError
 
 TWO_ASSETS = """\
@@ -165,15 +166,17 @@ def test_apply_converges_after_a_partial_asset_failure(fixture_repo, monkeypatch
     config, ctx = load_workshop(fixture_repo)
     logo = fixture_repo / 'notebooks/assets/logo.png'
     second = fixture_repo / 'notebooks/assets/second.png'
-    copyfile = shutil.copyfile
+    copy = shutil.copy
 
     def fail_on_second(source, target, **kwargs):
         if Path(target).name == 'second.png':
             raise PermissionError(target)
-        return copyfile(source, target, **kwargs)
+        return copy(source, target, **kwargs)
 
-    monkeypatch.setattr(render.shutil, 'copyfile', fail_on_second)
-    with pytest.raises(PermissionError):
+    monkeypatch.setattr(fs.shutil, 'copy', fail_on_second)
+    # Diagnosed rather than a bare PermissionError: the copy goes through the
+    # filesystem boundary, and nothing below cli.py raises a foreign error.
+    with pytest.raises(WorkshopifyError, match=r'second\.png'):
         render.apply(config, ctx)
     assert logo.is_file()
     assert not second.exists()
@@ -272,3 +275,74 @@ def test_no_files_matched_diagnoses(fixture_repo):
     config, ctx = load_workshop(fixture_repo)
     with pytest.raises(WorkshopifyError, match='matched nothing'):
         render.check(config, ctx)
+
+
+def test_apply_copies_an_asset_with_the_source_mode(fixture_repo):
+    """The repo's own copy of an asset must carry the source's mode.
+
+    apply used copyfile, which mints a fresh destination's mode from the umask
+    rather than taking the source's, so an executable asset landed
+    non-executable in the repo and was committed that way. It never
+    self-healed: `_asset_problem` compares bytes only, so `check` could not
+    report the divergence, and apply copies only when bytes differ.
+
+    The damage stops at the repo, not the published tree -- `build` re-copies
+    each asset from its *source* (build.py:99), never from the copy apply
+    wrote, and `test_every_copy_takes_its_mode_from_the_source` already pins
+    that leg. It is the checked-in file that was wrong.
+    """
+    script = fixture_repo / 'assets/tool.sh'
+    script.write_text('#!/bin/sh\n')
+    script.chmod(0o755)
+    context_py = fixture_repo / 'context.py'
+    context_py.write_text(
+        context_py.read_text() + "ASSETS['tools/tool.sh'] = 'assets/tool.sh'\n",
+    )
+    config, ctx = load_workshop(fixture_repo)
+
+    copied = fixture_repo / 'tools/tool.sh'
+    assert copied in render.apply(config, ctx)
+    assert copied.stat().st_mode & 0o777 == 0o755
+
+
+def test_an_unreadable_source_is_diagnosed(fixture_repo):
+    """A directory named `foo.py` matches `src/*.py`, and reading one is an
+    IsADirectoryError -- diagnosed, like every other filesystem failure."""
+    (fixture_repo / 'src/broken.py').mkdir()
+    config, ctx = load_workshop(fixture_repo)
+    with pytest.raises(WorkshopifyError, match=r'reading .*broken\.py'):
+        render.check(config, ctx)
+
+
+def test_a_source_that_is_not_utf8_is_diagnosed(fixture_repo):
+    """Pinning the encoding is what makes this failure possible, so `fs` owns it.
+
+    `UnicodeDecodeError` is a `ValueError`, which `diagnosed` does not catch
+    by default -- the same trap as `TOMLDecodeError`. Without it the module
+    that exists to abolish tracebacks at this boundary raised the one it had
+    just introduced, on every file matched by [tool.workshopify.render].
+    """
+    (fixture_repo / 'src/01_example.py').write_bytes(b'# %%\n# caf\xe9\n')
+    config, ctx = load_workshop(fixture_repo)
+    with pytest.raises(WorkshopifyError, match=r'reading .*01_example\.py'):
+        render.check(config, ctx)
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason='root writes a read-only file anyway')
+def test_apply_diagnoses_a_write_it_cannot_make(fixture_repo):
+    """apply's own docstring reasons about "a permissions error ... partway
+    through" -- a failure it discussed in prose and delivered as a traceback.
+
+    The param is changed first so there is genuinely something to write: apply
+    writes only what differs from what it would write, so against an unchanged
+    tree this would pass without ever reaching the write.
+    """
+    rewrite(fixture_repo, 'greeting = "hello"', 'greeting = "tena koe"')
+    config, ctx = load_workshop(fixture_repo)
+    src = fixture_repo / 'src/01_example.py'
+    src.chmod(0o444)
+    try:
+        with pytest.raises(WorkshopifyError, match=r'writing .*01_example\.py'):
+            render.apply(config, ctx)
+    finally:
+        src.chmod(0o644)
