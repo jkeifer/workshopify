@@ -34,6 +34,7 @@ import io
 import shutil
 
 from pathlib import Path
+from typing import Any
 
 import jupytext
 
@@ -58,7 +59,7 @@ class PublishError(WorkshopifyError):
     """Stripped output that is structurally unsound and must not ship."""
 
 
-def _run(text: str, namespace: dict, fname: str, *, delete_code: bool) -> str:
+def _run(text: str, namespace: dict[str, Any], fname: str, *, delete_code: bool) -> str:
     cog = Cog()
     options = cog.options
     options.begin_spec, options.end_spec, options.end_output = MARKERS

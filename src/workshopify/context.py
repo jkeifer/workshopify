@@ -18,6 +18,7 @@ import sys
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from workshopify.config import Config
 from workshopify.errors import WorkshopifyError
@@ -25,7 +26,7 @@ from workshopify.errors import WorkshopifyError
 
 @dataclass(frozen=True)
 class Context:
-    namespace: dict
+    namespace: dict[str, Any]
     assets: dict[Path, Path]
 
 
@@ -34,7 +35,7 @@ def load(config: Config) -> Context:
     if not path.is_file():
         raise WorkshopifyError(f'error: context module {path} does not exist')
 
-    namespace: dict = {'__file__': str(path), 'params': dict(config.params)}
+    namespace: dict[str, Any] = {'__file__': str(path), 'params': dict(config.params)}
     directory = str(path.parent)
     sys.path.insert(0, directory)
     try:
