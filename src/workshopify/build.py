@@ -10,7 +10,7 @@ work and a cruft report for tracked files no build wrote.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from workshopify import deps, fs, notebooks, worktree
@@ -20,34 +20,31 @@ from workshopify.errors import WorkshopifyError
 from workshopify.git import git
 
 
-def _copy(source: Path, dest: Path) -> list[Path]:
-    """Copy a file or directory tree, returning the files written.
+def _pairs(source: Path, dest: Path) -> list[tuple[Path, Path]]:
+    """(source, dest) for every file copying `source` onto `dest` would write.
 
-    One traversal both copies and reports, so the two cannot disagree. Walking
-    the source separately did disagree: `shutil.copytree` follows a symlinked
-    directory and copies what is under it, while `rglob('*')` does not recurse
-    into one, so everything under a `data/link -> ../shared` was written and
-    never reported -- flagged as cruft by `unwritten()` on every build, and
-    unclearable by --clean, since the next build writes it again and still
-    says nothing.
+    The plan and the copies made from it come out of one traversal, so what a
+    build reports and what it wrote cannot disagree. Walking the source
+    separately from copying it can: `shutil.copytree` descends into a
+    symlinked directory and `rglob('*')` does not, so everything under a
+    `data/link -> ../shared` is written by one and unknown to the other. This
+    walk is the copy's own and follows what the copy follows.
 
-    A glob of the destination would be wrong in the other direction: a rebuild
-    merges into a worktree an earlier build wrote, so leftovers this build
-    never wrote would be reported as written and hidden from that same cruft
-    check.
+    Deriving the report from the destination instead goes wrong in the other
+    direction: a rebuild merges into a worktree an earlier build wrote, so
+    leftovers this build never wrote would be reported as written -- and
+    hidden from the cruft check that exists to find exactly those.
 
-    The leaf copy is `fs.copy` and the listing is `fs.glob`, which is where
-    "mode is the source's" and "a failed listing is a diagnostic" are stated;
-    what this function adds is only the traversal and the report. Both steps
-    carry their own diagnostic, so there is nothing left here to wrap.
+    The listing is `fs.glob`, which is where a failed one becomes a
+    diagnostic; nothing else here touches the filesystem, because nothing here
+    writes.
     """
     if not source.is_dir():
-        fs.copy(source, dest)
-        return [dest]
+        return [(source, dest)]
     return [
-        written
+        pair
         for child in fs.glob(source, '*')
-        for written in _copy(child, dest / child.name)
+        for pair in _pairs(child, dest / child.name)
     ]
 
 
@@ -76,40 +73,62 @@ def _include_source(config: Config, name: str) -> Path:
     return source
 
 
-def _by(paths: list[Path], source: str) -> list[tuple[Path, str]]:
-    """`paths`, each carrying the name of what put it in the tree."""
-    return [(path, source) for path in paths]
+@dataclass
+class _Tree:
+    """The published tree being assembled: every path, and what puts it there.
 
+    A published path has one source. What identifies a source is where the
+    bytes come from, not how a diagnostic names it -- two include entries that
+    overlap, or one named twice, write the same file from the same place, and
+    are the config being repetitive rather than contradictory. The label is
+    carried alongside because reconciling the two spellings is the fix and
+    neither one alone locates it.
 
-def _targets(written: list[tuple[Path, str]], staging: Path) -> set[Path]:
-    """The tree's paths, refusing any that two different sources both write.
-
-    A published path has one source. Nothing enforced that: an `ASSETS`
-    target and an `include` entry naming the same file, or a `static/` overlay
-    and an include, both wrote it -- and collapsing the report to a set made
-    two sources writing one path identical to one source writing it once. The
-    build then reported success for a tree in which whichever step ran second
-    silently determined what ships.
-
-    That makes it the one report/reality drift this module did not check,
-    which is why the credit is carried this far rather than being dropped at
-    each step: knowing a path was written twice is useless without knowing by
-    what, and by then the spellings the author would have to reconcile are
-    gone. The same entry named twice is not a collision -- it writes the same
-    bytes from the same place, and is the config being repetitive rather than
-    contradictory.
+    Copies are planned and made in separate steps, so a collision is refused
+    while the tree is still untouched, as every other config error the
+    assembly can raise already is. `publish_into` hands in the user's own
+    worktree as staging: a refusal that had written most of a tree first
+    leaves them a directory to reason about instead of a message to act on.
     """
-    targets: dict[Path, str] = {}
-    for path, source in written:
-        relative = path.relative_to(staging)
-        rival = targets.setdefault(relative, source)
-        if rival != source:
+
+    staging: Path
+    sources: dict[Path, tuple[Path | str, str]] = field(default_factory=dict)
+    copies: list[tuple[Path, Path]] = field(default_factory=list)
+
+    def _place(self, dest: Path, origin: Path | str, label: str) -> None:
+        relative = dest.relative_to(self.staging)
+        rival, rival_label = self.sources.setdefault(relative, (origin, label))
+        if rival != origin:
             raise WorkshopifyError(
-                f'error: {rival} and {source} both write {relative} to the '
-                f'published tree; whichever runs second is what ships, so '
+                f'error: {rival_label} and {label} both write {relative} to '
+                f'the published tree; whichever runs second is what ships, so '
                 f'this build has no one answer. Rename or drop one of them.',
             )
-    return set(targets)
+
+    def to_copy(self, pairs: list[tuple[Path, Path]], label: str) -> None:
+        """Plan these copies. Nothing is written until `copy_all`."""
+        for source, dest in pairs:
+            self._place(dest, source, label)
+        self.copies.extend(pairs)
+
+    def copy_all(self) -> None:
+        """Make every planned copy, in the order planned. Mode is the source's."""
+        for source, dest in self.copies:
+            fs.copy(source, dest)
+
+    def generated(self, paths: list[Path], label: str) -> None:
+        """Record files a generating step has already written.
+
+        A generated file's origin is the step that wrote it: there is no
+        source path for another step to have in common with it, so the label
+        identifies it as well as names it and is deliberately passed as both.
+        """
+        for path in paths:
+            self._place(path, label, label)
+
+    @property
+    def targets(self) -> set[Path]:
+        return set(self.sources)
 
 
 def build(config: Config, ctx: Context, staging: Path) -> set[Path]:
@@ -120,33 +139,40 @@ def build(config: Config, ctx: Context, staging: Path) -> set[Path]:
     # notebooks.generate resolves its output dir, so the paths it reports back
     # are resolved; match that here or relative_to below fails.
     staging = staging.resolve()
-    written: list[tuple[Path, str]] = []
+    tree = _Tree(staging)
 
+    # Every copy is planned before any is made, so each way the config can be
+    # wrong -- an include entry naming nothing, an asset target outside the
+    # root, two sources claiming one path -- is refused with nothing written.
     for name in config.build.include:
         source = _include_source(config, name)
-        written += _by(_copy(source, staging / name), f'include entry {name!r}')
+        tree.to_copy(_pairs(source, staging / name), f'include entry {name!r}')
 
     static_dir = config.root / 'static'
     if static_dir.is_dir():
         for source in (p for p in fs.glob(static_dir, '**/*') if p.is_file()):
-            written += _by(
-                _copy(source, staging / source.relative_to(static_dir)),
+            tree.to_copy(
+                _pairs(source, staging / source.relative_to(static_dir)),
                 'the static/ overlay',
             )
 
     # context.load already refuses a target outside the root, so this is the
     # same question asked of a Context that came from somewhere else.
     for target, source in sorted(ctx.assets.items()):
-        written += _by(
-            _copy(source, config.rebase(target, staging, 'asset target')),
+        tree.to_copy(
+            _pairs(source, config.rebase(target, staging, 'asset target')),
             f'asset {config.display_path(target)}',
         )
 
-    written += _by(notebooks.generate(config, ctx, staging), 'the generated notebooks')
+    tree.copy_all()
 
-    written += _by(deps.write_deps(config, staging), 'the derived pyproject and lock')
+    # The generating steps report what they wrote, so their paths are known
+    # only once they have written them -- which is why they run after the
+    # copies rather than joining the plan.
+    tree.generated(notebooks.generate(config, ctx, staging), 'the generated notebooks')
+    tree.generated(deps.write_deps(config, staging), 'the derived pyproject and lock')
 
-    return _targets(written, staging)
+    return tree.targets
 
 
 def unwritten(target: Path, written: set[Path]) -> list[Path]:

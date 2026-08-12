@@ -146,14 +146,14 @@ def test_build_diagnoses_an_asset_target_outside_the_repo_root(
 
 
 def test_a_directory_include_reports_every_file_it_writes(fixture_repo, tmp_path):
-    """The tree arm of _copy, and the symlinked directory that broke its report.
+    """The tree arm of _pairs, and the symlinked directory that broke its report.
 
     A copy that follows a symlinked directory and a walk that does not recurse
     into one disagree by everything under `data/link`: those files were
     written and never reported, so `unwritten` called them cruft on every
     build and --clean could never clear them -- it deletes what the next build
     writes again, unreported. This is also the only test that copies a tree at
-    all, which is the whole reason _copy exists.
+    all, which is the whole reason _pairs exists.
     """
     shared = fixture_repo / 'shared'
     shared.mkdir()
@@ -275,11 +275,14 @@ def test_every_copy_takes_its_mode_from_the_source(fixture_repo, tmp_path):
 def test_two_sources_writing_one_path_are_refused(fixture_repo, tmp_path):
     """One published path, two things claiming it, and no way to have both.
 
-    An ASSETS target that is also an include entry used to be a build that
-    reported success: the report was collapsed to a set, so one path written
-    twice and one path written once were the same answer, and what shipped
-    was whichever step happened to run second. Both spellings are named,
-    because reconciling them is the fix and neither one alone locates it.
+    An ASSETS target that is also an include entry is two answers to a
+    one-answer question, and what would ship is whichever step ran second.
+    Both spellings are named, because reconciling them is the fix and neither
+    one alone locates it.
+
+    Nothing is written: the copies are planned before any is made, so a config
+    error costs the author a message rather than a half-populated worktree --
+    `publish_into` hands in the worktree they work in.
     """
     (fixture_repo / 'setup.sh').write_text('#!/bin/sh\n')
     ctx_py = fixture_repo / 'context.py'
@@ -287,23 +290,58 @@ def test_two_sources_writing_one_path_are_refused(fixture_repo, tmp_path):
     _set_include(fixture_repo, 'setup.sh')
     uv_lock(fixture_repo)
     config, ctx = load_workshop(fixture_repo)
+    staging = tmp_path / 'staging'
     with pytest.raises(WorkshopifyError) as e:
-        build.build(config, ctx, tmp_path)
+        build.build(config, ctx, staging)
     assert "include entry 'setup.sh'" in str(e.value)
     assert 'asset setup.sh' in str(e.value)
+    assert not list(staging.rglob('*')), 'refused after writing part of the tree'
 
 
 def test_the_same_include_entry_twice_is_not_a_collision(fixture_repo, tmp_path):
     """Repetition is not contradiction: both writes put the same bytes there.
 
     The check is for two *sources* disagreeing over one path, so a config
-    that names one entry twice must still build -- it did before, and there
-    is nothing for an author to reconcile.
+    that names one entry twice must still build -- there is nothing for an
+    author to reconcile.
     """
     _set_include(fixture_repo, 'Dockerfile', 'Dockerfile')
     uv_lock(fixture_repo)
     config, ctx = load_workshop(fixture_repo)
     assert Path('Dockerfile') in build.build(config, ctx, tmp_path)
+
+
+def test_overlapping_include_entries_are_not_a_collision(fixture_repo, tmp_path):
+    """The same repetition wearing two spellings, which is still not a conflict.
+
+    `docs` and `docs/index.md` both write `docs/index.md` -- the same bytes,
+    from the same file, in the same mode. Identity is where the bytes come
+    from, so comparing how the diagnostic names each one instead refuses a
+    build that has exactly one answer and demands the author change it.
+    """
+    docs = fixture_repo / 'docs'
+    docs.mkdir()
+    (docs / 'index.md').write_text('hi')
+    _set_include(fixture_repo, 'docs', 'docs/index.md')
+    uv_lock(fixture_repo)
+    config, ctx = load_workshop(fixture_repo)
+    assert Path('docs/index.md') in build.build(config, ctx, tmp_path)
+    assert (tmp_path / 'docs/index.md').read_text() == 'hi'
+
+
+def test_an_include_entry_that_names_nothing_copies_nothing(fixture_repo, tmp_path):
+    """The refusal comes before the first copy, not between two of them.
+
+    Every include entry is resolved while the plan is being built, so the
+    third one being wrong is caught with the first two still unwritten.
+    """
+    _set_include(fixture_repo, 'Dockerfile', 'nope')
+    uv_lock(fixture_repo)
+    config, ctx = load_workshop(fixture_repo)
+    staging = tmp_path / 'staging'
+    with pytest.raises(WorkshopifyError, match='does not exist'):
+        build.build(config, ctx, staging)
+    assert not (staging / 'Dockerfile').exists()
 
 
 def test_a_repo_with_no_static_directory_builds(fixture_repo, tmp_path):
