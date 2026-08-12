@@ -33,6 +33,7 @@ import difflib
 import io
 import shutil
 
+from enum import Enum, auto
 from pathlib import Path
 from typing import Any
 
@@ -90,16 +91,44 @@ def _rendered(config: Config, ctx: Context) -> dict[Path, str]:
     }
 
 
+class AssetProblem(Enum):
+    """What is wrong with one declared asset. See `_asset_problem`."""
+
+    NO_SOURCE = auto()
+    NOT_COPIED = auto()
+    DIFFERS = auto()
+
+
+def _asset_problem(target: Path, source: Path) -> AssetProblem | None:
+    """The single statement of what makes an asset wrong; None if it is right.
+
+    What a problem costs is the caller's call, and the two callers price them
+    differently: to check() all three are errors, while to apply() only a
+    missing source is -- the other two are the work it exists to do.
+    """
+    if not source.is_file():
+        return AssetProblem.NO_SOURCE
+    if not target.is_file():
+        return AssetProblem.NOT_COPIED
+    if target.read_bytes() != source.read_bytes():
+        return AssetProblem.DIFFERS
+    return None
+
+
 def _asset_errors(config: Config, ctx: Context) -> list[str]:
     errors = []
     for target, source in sorted(ctx.assets.items()):
+        problem = _asset_problem(target, source)
+        if problem is None:
+            continue
         name = config.display_path(target)
-        if not source.is_file():
-            errors.append(f'{source}: missing; cannot check {name}')
-        elif not target.is_file():
-            errors.append(f'{name}: missing (expected a copy of {source})')
-        elif target.read_bytes() != source.read_bytes():
-            errors.append(f'{name}: does not match {source}')
+        match problem:
+            case AssetProblem.NO_SOURCE:
+                errors.append(f'{source}: missing; cannot check {name}')
+            case AssetProblem.NOT_COPIED:
+                errors.append(f'{name}: missing (expected a copy of {source})')
+            case AssetProblem.DIFFERS:
+                errors.append(f'{name}: does not match {source}')
     return errors
 
 
@@ -122,10 +151,19 @@ def apply(config: Config, ctx: Context) -> list[Path]:
     converges. A run with nothing to do writes nothing and returns [].
     """
     rendered = _rendered(config, ctx)
-    missing = [str(s) for s in sorted(ctx.assets.values()) if not s.is_file()]
+    problems = {
+        target: _asset_problem(target, source)
+        for target, source in sorted(ctx.assets.items())
+    }
+    missing = sorted(
+        source
+        for target, source in ctx.assets.items()
+        if problems[target] is AssetProblem.NO_SOURCE
+    )
     if missing:
         raise WorkshopifyError(
-            f'error: asset source(s) do not exist: {", ".join(missing)}',
+            f'error: asset source(s) do not exist: '
+            f'{", ".join(str(s) for s in missing)}',
         )
     changed = []
     for path, text in rendered.items():
@@ -133,7 +171,7 @@ def apply(config: Config, ctx: Context) -> list[Path]:
             path.write_text(text)
             changed.append(path)
     for target, source in sorted(ctx.assets.items()):
-        if not target.is_file() or target.read_bytes() != source.read_bytes():
+        if problems[target] is not None:
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source, target)
             changed.append(target)
