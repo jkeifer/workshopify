@@ -39,9 +39,9 @@ def _paths(dotted: tuple[str, ...], kind: str) -> _Paths:
     Which is why a path listed alongside one of its own descendants is an
     error rather than a reading to pick: `('tool.uv', 'tool.uv.sources')` asks
     both for all of [tool.uv] and for only its [sources], and the tree has no
-    room to hold both. The narrow reading is the one that used to win, quietly
-    -- it shipped [tool.uv.sources] and dropped `package = false` -- and a
-    silently wrong pyproject is exactly what `_resolve` refuses for a typo.
+    room to hold both. Picking either reading is silent -- the narrow one
+    ships [tool.uv.sources] and drops `package = false` -- and a silently
+    wrong pyproject is exactly what `_resolve` refuses for a typo.
     """
     root: _Paths = {}
     leaves: set[str] = set()

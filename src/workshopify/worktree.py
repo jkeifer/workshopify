@@ -80,9 +80,9 @@ def _worktrees(root: Path) -> dict[Path, str | None]:
 
     A `worktree` line registers the path; a `branch` line only says what is
     checked out there, and detached and bare checkouts emit none. Keying off
-    the branch line dropped those entries entirely, so a path already occupied
-    by a detached worktree read as merely occupied -- "exists and is not
-    empty", or whatever git said when we handed it the path anyway. Every
+    the `branch` line would drop those entries entirely, so a path already
+    occupied by a detached worktree would read as merely occupied -- "exists
+    and is not empty", which names neither what holds it nor the remedy. Every
     caller here asks "is this path taken", which is the `worktree` line's
     question, not the `branch` line's.
     """

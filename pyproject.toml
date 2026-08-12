@@ -102,10 +102,9 @@ ignore = [
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 # What `fs.py` and `proc.py` exist to state is only stated once if nothing
-# else can reach past them. Both invariants below were documented and broken
-# in the same tree before this: two hand-rolled `subprocess.run` wrappers that
-# had already drifted, and two `shutil.copyfile` calls under a CLAUDE.md that
-# says "never copyfile". Ruff cannot see a bare `Path.read_text`, so the
+# else can reach past them: a second `subprocess.run` wrapper or a bare
+# `shutil.copyfile` is a second answer to a question this package has already
+# settled, and the two drift. Ruff cannot see a bare `Path.read_text`, so the
 # diagnose-every-read half of `fs.py` stays convention.
 'shutil'.msg = 'copy files through workshopify.fs, which sets the source mode'
 'subprocess'.msg = 'run subprocesses through workshopify.proc, which diagnoses them'

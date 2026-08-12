@@ -1,9 +1,8 @@
 """The subprocess boundary, wrapped once, for the whole package.
 
 Both programs this tool shells out to -- git and uv -- are run from here, so
-every decision that makes running one correctly correct is made once. It was
-made twice before, and the copies drifted: one path gave diagnostics and the
-other a raw traceback, and the second spelling had quietly lost `text=True`.
+every decision that makes running one correctly correct is made once. Nothing
+else in the package spells `subprocess`; ruff's banned-api enforces it.
 """
 
 from __future__ import annotations
@@ -23,8 +22,9 @@ def run(argv: Sequence[str], cwd: Path) -> str:
     and objected, where its stderr is the whole diagnostic and anything added
     to it is noise; or the program never ran at all -- nothing on PATH, because
     nothing makes a `pipx install workshopify` have a git or a uv -- which only
-    the errno can describe. Catching just the first left the second a bare
-    traceback out of a CLI whose only rule is that failures are diagnostics.
+    the errno can describe. Both are diagnosed, because catching only the first
+    leaves the second a bare traceback out of a CLI whose only rule is that
+    failures are diagnostics.
 
     `check=True` with `capture_output` throws the explanation away and leaves
     the user a bare "returned non-zero exit status 1", so the stderr the

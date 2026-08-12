@@ -93,9 +93,7 @@ def _sub[T: DataclassInstance](parent: _Table, name: str, target: type[T]) -> T:
     The dataclass is the whole spelling of the subtable: its fields name the
     keys, its annotations say how each is read, and its defaults are what an
     absent key falls through to. Adding a config key is therefore one line
-    there and nothing here -- which is the point, because the form this
-    replaced named every key three times over and a key that reached the
-    constructor without a validator was accepted whatever it held.
+    there and nothing here.
 
     An annotation `_PARSERS` has no entry for is a gap in that vocabulary, not
     a bad pyproject.toml: no author can cause it and none can fix it, so it
@@ -105,8 +103,7 @@ def _sub[T: DataclassInstance](parent: _Table, name: str, target: type[T]) -> T:
     Only the keys the table gave are parsed, so an absent one is absent from
     the constructor call and the field default -- the only default there is --
     applies by being the only thing left. Nothing has to represent "not
-    given", which is what a parser returning None to mean it, and a filter
-    downstream to take those Nones back out, were both for.
+    given".
 
     The parsers are still resolved over every field rather than over the keys
     given, so the vocabulary is checked on every load and not only when a
@@ -197,9 +194,7 @@ class Config:
         The judgment, separate from any use of it, because two callers want
         different things from the same verdict: `rebase` wants somewhere to
         put the answer, while `context` wants only to know that a declared
-        asset target is a place this repo has -- and asking a mapping function
-        for its judgment and dropping what it mapped is how that was said
-        before there was a name for it.
+        asset target is a place this repo has.
 
         Both sides are resolved because one directory has more than one
         spelling: on macOS a path under /var and the same path under
@@ -252,8 +247,8 @@ class Config:
         # Only the three uniform subtables go through `_sub`; `context` and
         # `params` above are each one of a kind -- one mandatory and read as a
         # path, one an arbitrary namespace only shape-checked -- and covering
-        # them would cost an annotation-to-behavior vocabulary richer than the
-        # code it replaced.
+        # them would cost a richer annotation-to-behavior vocabulary than two
+        # one-off keys are worth.
         return cls(
             root=root,
             context=Path(context),

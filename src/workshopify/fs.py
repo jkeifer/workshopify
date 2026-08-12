@@ -72,8 +72,7 @@ def write(path: Path, text: str) -> None:
     The parent is created unconditionally because every path written through
     here is a build output whose directory this tool owns -- there is no
     caller for which "the directory must already exist" is the contract. The
-    alternative is `mkdir` restated at each call site, which is what three of
-    them did, by hand, until this module existed.
+    alternative is `mkdir` restated at each call site.
     """
     with diagnosed(f'writing {path}', *_TEXT):
         path.parent.mkdir(parents=True, exist_ok=True)
