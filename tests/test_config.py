@@ -1,10 +1,10 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from pathlib import Path
 
 import pytest
 
 from workshopify import config as config_module
-from workshopify.config import BuildConfig, Config, NotebooksConfig
+from workshopify.config import BuildConfig, Config, NotebooksConfig, RenderConfig
 from workshopify.errors import WorkshopifyError
 
 
@@ -68,7 +68,20 @@ def test_discover_walks_up_from_a_subdirectory(fixture_repo):
     assert Config.discover(sub).root == fixture_repo.resolve()
 
 
-def test_discover_ignores_a_pyproject_without_the_table(fixture_repo, tmp_path):
+def test_discover_ignores_a_pyproject_without_the_table(fixture_repo):
+    """A pyproject.toml is not a workshop root; the [tool.workshopify] table is.
+
+    Nested projects are ordinary -- a docs build, a vendored package -- and
+    stopping the walk at the first pyproject.toml would answer with one that
+    configures nothing instead of with the workshop enclosing it.
+    """
+    nested = fixture_repo / 'sub'
+    nested.mkdir()
+    (nested / 'pyproject.toml').write_text('[project]\nname = "sub"\n')
+    assert Config.discover(nested).root == fixture_repo.resolve()
+
+
+def test_discover_without_a_workshop_anywhere_diagnoses(tmp_path):
     with pytest.raises(WorkshopifyError, match='workshopify'):
         Config.discover(tmp_path)
 
@@ -122,31 +135,41 @@ def test_params_must_be_a_table(fixture_repo):
         Config.load(fixture_repo)
 
 
-def test_build_defaults_come_from_the_dataclass(fixture_repo, monkeypatch):
-    """A key absent from pyproject.toml takes the dataclass default.
+def test_every_absent_key_takes_its_field_default(fixture_repo):
+    """A key pyproject.toml omits falls through to the dataclass, whole table over.
 
-    The dataclasses are the only place a default is written down, so changing
-    one here changes what an unconfigured workshop gets.
+    The expectation is read off the fields rather than restated as literals,
+    so this covers a field the day it is added and cannot drift from the
+    defaults it is checking: a workshop that configures nothing gets exactly
+    what config.py declares, which is the only place a default is written.
+    """
+    rewrite(fixture_repo, 'files = ["src/*.py"]\n', '')
+    rewrite(fixture_repo, 'include = ["Dockerfile"]\n', '')
+    config = Config.load(fixture_repo)
+    for section, target in (
+        (config.render, RenderConfig),
+        (config.build, BuildConfig),
+        (config.notebooks, NotebooksConfig),
+    ):
+        for f in fields(target):
+            assert getattr(section, f.name) == f.default, f'{target.__name__}.{f.name}'
+
+
+def test_a_field_of_an_unreadable_type_says_so():
+    """A field of a type nothing parses is workshopify's bug, not a config error.
+
+    No pyproject.toml can provoke it -- only adding a field here can -- so it
+    must not arrive as a KeyError from a lookup table nobody remembers, on a
+    load that used to work. Naming the field and its annotation is what makes
+    the gap fixable by whoever opened it.
     """
 
     @dataclass(frozen=True)
-    class OtherDefaults(BuildConfig):
-        branch: str = 'published'
-        keep_tables: tuple[str, ...] = ('project',)
+    class Unreadable:
+        depth: int = 1
 
-    monkeypatch.setattr(config_module, 'BuildConfig', OtherDefaults)
-    config = Config.load(fixture_repo)
-    assert config.build.branch == 'published'
-    assert config.build.keep_tables == ('project',)
-
-
-def test_notebooks_default_comes_from_the_dataclass(fixture_repo, monkeypatch):
-    @dataclass(frozen=True)
-    class OtherDefaults(NotebooksConfig):
-        src: str = 'sources'
-
-    monkeypatch.setattr(config_module, 'NotebooksConfig', OtherDefaults)
-    assert Config.load(fixture_repo).notebooks.src == 'sources'
+    with pytest.raises(TypeError, match=r'Unreadable\.depth'):
+        config_module._sub({}, 'build', Unreadable)
 
 
 def test_kebab_keys_name_snake_case_fields(fixture_repo):

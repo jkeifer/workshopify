@@ -18,47 +18,51 @@ from workshopify.config import Config
 from workshopify.errors import WorkshopifyError
 
 
-def _render(args: argparse.Namespace) -> int:
-    config = Config.discover()
+def _err(*lines: str) -> None:
+    """Everything the user is told that is not the command's result.
+
+    Progress, advisory notes and diagnostics alike go to stderr, so the one
+    thing on stdout stays a value a caller can pipe. One helper rather than
+    `file=sys.stderr` on every call because that keyword is what wrapped the
+    longer lines below onto three lines apiece, hiding what they say.
+    """
+    for line in lines:
+        print(line, file=sys.stderr)
+
+
+def _render(args: argparse.Namespace, config: Config) -> int:
     changed = render.apply(config, context.load(config))
-    for path in changed:
-        print(f'rendered {config.display_path(path)}', file=sys.stderr)
+    _err(*(f'rendered {config.display_path(path)}' for path in changed))
     return 0
 
 
-def _check(args: argparse.Namespace) -> int:
-    config = Config.discover()
+def _check(args: argparse.Namespace, config: Config) -> int:
     errors = render.check(config, context.load(config))
-    for error in errors:
-        print(error, file=sys.stderr)
+    _err(*errors)
     if errors:
         return 1
-    print('rendered values and assets are current', file=sys.stderr)
+    _err('rendered values and assets are current')
     return 0
 
 
-def _generate(args: argparse.Namespace) -> int:
-    config = Config.discover()
+def _generate(args: argparse.Namespace, config: Config) -> int:
     written = notebooks.generate(
         config,
         context.load(config),
         args.output_dir or config.root,
     )
-    for path in written:
-        print(f'wrote {config.display_path(path)}', file=sys.stderr)
+    _err(*(f'wrote {config.display_path(path)}' for path in written))
     return 0
 
 
-def _build(args: argparse.Namespace) -> int:
-    config = Config.discover()
+def _build(args: argparse.Namespace, config: Config) -> int:
     prepared = worktree.prepare_worktree(
         config.root,
         config.build.branch,
         config.root / config.build.branch,
         orphan=False,
     )
-    for note in prepared.notes:
-        print(note, file=sys.stderr)
+    _err(*prepared.notes)
     published = build.publish_into(
         config,
         context.load(config),
@@ -76,20 +80,16 @@ def _build(args: argparse.Namespace) -> int:
 
 def _publish_instructions(target: Path) -> None:
     """How to review and land the build. It commits nothing itself."""
-    print(f'built into {target}', file=sys.stderr)
-    print(f'review with: git -C {target} status', file=sys.stderr)
-    print('publish with:', file=sys.stderr)
-    print(f'  git -C {target} add -A', file=sys.stderr)
-    print(
+    _err(
+        f'built into {target}',
+        f'review with: git -C {target} status',
+        'publish with:',
+        f'  git -C {target} add -A',
         f'  PREK_ALLOW_NO_CONFIG=1 git -C {target} commit -m "Update notebooks"',
-        file=sys.stderr,
-    )
-    print(f'  git -C {target} push', file=sys.stderr)
-    print(
+        f'  git -C {target} push',
         'PREK_ALLOW_NO_CONFIG=1 is required: git hooks are shared across all '
-        'worktrees,\n'
-        'and the workshop branch intentionally carries no pre-commit config.',
-        file=sys.stderr,
+        'worktrees,\nand the workshop branch intentionally carries no '
+        'pre-commit config.',
     )
 
 
@@ -97,23 +97,23 @@ def _stale_report(stale: list[Path]) -> None:
     """Tracked files the build did not write, and how to be rid of them."""
     if not stale:
         return
-    print('not written by this build:', file=sys.stderr)
-    for path in stale:
-        print(f'  {path}', file=sys.stderr)
-    print('re-run with --clean to remove', file=sys.stderr)
+    _err(
+        'not written by this build:',
+        *(f'  {path}' for path in stale),
+        're-run with --clean to remove',
+    )
 
 
-def _set(args: argparse.Namespace) -> int:
-    config = Config.discover()
+def _set(args: argparse.Namespace, config: Config) -> int:
     changed = params.set_param(config, args.key, args.value)
-    for path in changed:
-        print(f'updated {config.display_path(path)}', file=sys.stderr)
-    print(f'set {args.key} = {args.value!r}', file=sys.stderr)
+    _err(
+        *(f'updated {config.display_path(path)}' for path in changed),
+        f'set {args.key} = {args.value!r}',
+    )
     return 0
 
 
-def _worktree(args: argparse.Namespace) -> int:
-    config = Config.discover()
+def _worktree(args: argparse.Namespace, config: Config) -> int:
     path = args.path or config.root / args.branch
     prepared = worktree.prepare_worktree(
         config.root,
@@ -121,8 +121,7 @@ def _worktree(args: argparse.Namespace) -> int:
         path,
         orphan=args.orphan,
     )
-    for note in prepared.notes:
-        print(note, file=sys.stderr)
+    _err(*prepared.notes)
     # The path is the command's result, so it goes to stdout where it can be
     # piped; the notes above are commentary and stay on stderr.
     print(prepared.path)
@@ -184,7 +183,10 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
-        return args.func(args)
+        # Every subcommand works from the discovered repo, so it is found once
+        # here -- inside the try, because failing to find one is the first
+        # diagnostic a user outside a workshop repo gets.
+        return args.func(args, Config.discover())
     except WorkshopifyError as e:
-        print(str(e), file=sys.stderr)
+        _err(str(e))
         return 1

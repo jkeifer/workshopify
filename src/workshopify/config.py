@@ -13,11 +13,18 @@ from __future__ import annotations
 
 import tomllib
 
+from collections.abc import Callable
 from dataclasses import dataclass, field, fields
 from pathlib import Path
-from typing import Any, Self
+from typing import TYPE_CHECKING, Any, Self, get_type_hints
 
 from workshopify.errors import WorkshopifyError
+
+if TYPE_CHECKING:
+    # The only spelling of "a dataclass, as a type" that a checker accepts;
+    # it is what lets `_sub` hand back the class it was given rather than Any,
+    # so a subtable wired to the wrong dataclass is a type error here.
+    from _typeshed import DataclassInstance
 
 type _Table = dict[str, Any]
 
@@ -62,15 +69,6 @@ def _given(**values: Any) -> _Table:
     return {name: value for name, value in values.items() if value is not None}
 
 
-def _section(parent: _Table, name: str, target: type[Any]) -> tuple[_Table, str]:
-    """A subtable checked against `target`, with its name for the reads to come."""
-    where = _where(name)
-    table = parent.get(name, {})
-    if not isinstance(table, dict):
-        raise WorkshopifyError(f'error: {where} must be a table')
-    return _checked(table, {f.name for f in fields(target)}, where), where
-
-
 def _string(table: _Table, key: str, where: str) -> str | None:
     value = table.get(key)
     if value is not None and not isinstance(value, str):
@@ -87,6 +85,47 @@ def _strings(table: _Table, key: str, where: str) -> tuple[str, ...] | None:
             f'error: {where} {_toml_key(key)} must be a list of strings',
         )
     return tuple(value)
+
+
+# How a subtable field is read, keyed by the annotation the dataclass gives it.
+# This is the vocabulary a subtable may be written in; a field annotated with
+# anything else has no reading, and `_sub` says so rather than guessing.
+_PARSERS: dict[Any, Callable[[_Table, str, str], Any]] = {
+    str: _string,
+    tuple[str, ...]: _strings,
+}
+
+
+def _sub[T: DataclassInstance](parent: _Table, name: str, target: type[T]) -> T:
+    """A subtable parsed into `target`, one field per field it declares.
+
+    The dataclass is the whole spelling of the subtable: its fields name the
+    keys, its annotations say how each is read, and its defaults are what an
+    absent key falls through to. Adding a config key is therefore one line
+    there and nothing here -- which is the point, because the form this
+    replaced named every key three times over and a key that reached the
+    constructor without a validator was accepted whatever it held.
+
+    An annotation `_PARSERS` has no entry for is a gap in that vocabulary, not
+    a bad pyproject.toml: no author can cause it and none can fix it, so it
+    raises TypeError naming the field and the type, and arrives with the
+    traceback a bug in this package wants, rather than as a bare KeyError.
+    """
+    where = _where(name)
+    table = parent.get(name, {})
+    if not isinstance(table, dict):
+        raise WorkshopifyError(f'error: {where} must be a table')
+    table = _checked(table, {f.name for f in fields(target)}, where)
+    hints = get_type_hints(target)
+    values = {}
+    for f in fields(target):
+        parser = _PARSERS.get(hints[f.name])
+        if parser is None:
+            raise TypeError(
+                f'no config parser for {target.__name__}.{f.name}: {hints[f.name]}',
+            )
+        values[f.name] = parser(table, f.name, where)
+    return target(**_given(**values))
 
 
 def _workshopify(pyproject: Path) -> _Table | None:
@@ -181,24 +220,17 @@ class Config:
         if not isinstance(params, dict):
             raise WorkshopifyError(f'error: {_where("params")} must be a table')
 
-        render, at_render = _section(top, 'render', RenderConfig)
-        build, at_build = _section(top, 'build', BuildConfig)
-        notebooks, at_notebooks = _section(top, 'notebooks', NotebooksConfig)
+        # Only the three uniform subtables go through `_sub`; `context` and
+        # `params` above are each one of a kind -- one mandatory and read as a
+        # path, one an arbitrary namespace only shape-checked -- and covering
+        # them would cost an annotation-to-behavior vocabulary richer than the
+        # code it replaced.
         return cls(
             root=root,
             context=Path(context),
-            render=RenderConfig(**_given(files=_strings(render, 'files', at_render))),
-            build=BuildConfig(
-                **_given(
-                    branch=_string(build, 'branch', at_build),
-                    include=_strings(build, 'include', at_build),
-                    keep_tables=_strings(build, 'keep_tables', at_build),
-                    drop_keys=_strings(build, 'drop_keys', at_build),
-                ),
-            ),
-            notebooks=NotebooksConfig(
-                **_given(src=_string(notebooks, 'src', at_notebooks)),
-            ),
+            render=_sub(top, 'render', RenderConfig),
+            build=_sub(top, 'build', BuildConfig),
+            notebooks=_sub(top, 'notebooks', NotebooksConfig),
             params=dict(params),
         )
 

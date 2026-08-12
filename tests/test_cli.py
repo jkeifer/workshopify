@@ -1,6 +1,8 @@
 import json
 import subprocess
 
+from conftest import git_repo
+
 from workshopify.cli import main
 
 
@@ -67,9 +69,34 @@ def test_a_diagnosed_failure_prints_and_exits_one(fixture_repo, monkeypatch, cap
     assert 'error:' in capsys.readouterr().err
 
 
-def test_worktree_subcommand(fixture_repo, monkeypatch, capsys):
-    from conftest import git_repo
+def test_a_failure_from_cog_arrives_as_a_diagnostic_too(
+    fixture_repo,
+    monkeypatch,
+    capsys,
+):
+    """The mistake an author actually makes: a generator that throws.
 
+    It comes out of cog, not out of workshopify, so it used to reach main()
+    as something other than a WorkshopifyError and land on the author as a
+    traceback through the package they were only using. Here at the CLI is
+    where that distinction is visible at all: whatever raised it, the author
+    gets one `error:` line naming the file they have to fix, and exit 1.
+    """
+    monkeypatch.chdir(fixture_repo)
+    (fixture_repo / 'src' / '02_broken.py').write_text(
+        '# %% [markdown]\n'
+        '# # Broken\n'
+        '#\n'
+        '# <!--[[[cog md(no_such_name()) ]]]-->\n'
+        '# <!--[[[end]]]-->\n',
+    )
+    assert main(['render']) == 1
+    err = capsys.readouterr().err
+    assert err.startswith('error:')
+    assert '02_broken.py' in err
+
+
+def test_worktree_subcommand(fixture_repo, monkeypatch, capsys):
     git_repo(fixture_repo)
     subprocess.run(['git', 'add', '-A'], cwd=fixture_repo, check=True)
     subprocess.run(['git', 'commit', '-qm', 'x'], cwd=fixture_repo, check=True)
@@ -84,8 +111,6 @@ def test_worktree_subcommand(fixture_repo, monkeypatch, capsys):
 
 def test_worktree_subcommand_passes_orphan_through(fixture_repo, monkeypatch, capsys):
     """--orphan must reach prepare_worktree: the branch gets no history."""
-    from conftest import git_repo
-
     git_repo(fixture_repo)
     subprocess.run(['git', 'add', '-A'], cwd=fixture_repo, check=True)
     subprocess.run(['git', 'commit', '-qm', 'x'], cwd=fixture_repo, check=True)
@@ -103,8 +128,6 @@ def test_worktree_subcommand_passes_orphan_through(fixture_repo, monkeypatch, ca
 
 
 def _committed_repo(fixture_repo):
-    from conftest import git_repo
-
     git_repo(fixture_repo)
     subprocess.run(['git', 'add', '-A'], cwd=fixture_repo, check=True)
     subprocess.run(['git', 'commit', '-qm', 'x'], cwd=fixture_repo, check=True)
