@@ -105,7 +105,7 @@ def _stale_report(stale: list[Path]) -> None:
 
 def _set(args: argparse.Namespace) -> int:
     config = Config.discover()
-    changed = params.set_param(config.root, args.key, args.value)
+    changed = params.set_param(config, args.key, args.value)
     for path in changed:
         print(f'updated {config.display_path(path)}', file=sys.stderr)
     print(f'set {args.key} = {args.value!r}', file=sys.stderr)

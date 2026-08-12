@@ -1,11 +1,12 @@
 import pytest
 
+from workshopify.config import Config
 from workshopify.errors import WorkshopifyError
 from workshopify.params import set_param
 
 
 def test_set_rewrites_the_param_and_rerenders(fixture_repo):
-    changed = set_param(fixture_repo, 'greeting', 'kia ora')
+    changed = set_param(Config.load(fixture_repo), 'greeting', 'kia ora')
     text = (fixture_repo / 'pyproject.toml').read_text()
     assert 'greeting = "kia ora"' in text
     src = (fixture_repo / 'src/01_example.py').read_text()
@@ -22,13 +23,13 @@ def test_set_preserves_pyproject_comments(fixture_repo):
             '# which greeting ships\n[tool.workshopify.params]',
         ),
     )
-    set_param(fixture_repo, 'greeting', 'howdy')
+    set_param(Config.load(fixture_repo), 'greeting', 'howdy')
     assert '# which greeting ships' in pyproject.read_text()
 
 
 def test_set_rejects_an_unknown_param(fixture_repo):
     with pytest.raises(WorkshopifyError, match="no param 'nope'"):
-        set_param(fixture_repo, 'nope', 'x')
+        set_param(Config.load(fixture_repo), 'nope', 'x')
     assert 'nope' not in (fixture_repo / 'pyproject.toml').read_text()
 
 
@@ -45,7 +46,7 @@ def test_set_rolls_back_when_rendering_fails(fixture_repo):
         '    return word.upper()\n',
     )
     with pytest.raises(WorkshopifyError):
-        set_param(fixture_repo, 'greeting', 'boom')
+        set_param(Config.load(fixture_repo), 'greeting', 'boom')
     assert (fixture_repo / 'pyproject.toml').read_text() == original
     assert (fixture_repo / 'src/01_example.py').read_text() == src_before
 
@@ -53,5 +54,5 @@ def test_set_rolls_back_when_rendering_fails(fixture_repo):
 def test_set_to_the_current_value_still_restores_assets(fixture_repo):
     target = fixture_repo / 'notebooks/assets/logo.png'
     assert not target.exists()
-    set_param(fixture_repo, 'greeting', 'hello')
+    set_param(Config.load(fixture_repo), 'greeting', 'hello')
     assert target.is_file()

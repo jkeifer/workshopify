@@ -17,8 +17,7 @@ from workshopify.config import Config
 from workshopify.errors import WorkshopifyError
 
 
-def set_param(root: Path, key: str, value: str) -> list[Path]:
-    config = Config.load(root)
+def set_param(config: Config, key: str, value: str) -> list[Path]:
     if key not in config.params:
         available = ', '.join(sorted(config.params)) or '(none defined)'
         raise WorkshopifyError(
@@ -32,7 +31,10 @@ def set_param(root: Path, key: str, value: str) -> list[Path]:
     config.pyproject.write_text(tomlkit.dumps(doc))
 
     try:
-        fresh = Config.load(root)
+        # Deliberately re-read rather than reuse the Config passed in: the
+        # context module is executed against the recorded params, so rendering
+        # must see the value just written, not the one this call started from.
+        fresh = Config.load(config.root)
         ctx = context.load(fresh)
         return render.apply(fresh, ctx)
     except Exception:
