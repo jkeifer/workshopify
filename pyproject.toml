@@ -91,8 +91,9 @@ ignore = [
 # The two boundary modules, and the only places allowed to import what they
 # wrap -- see flake8-tidy-imports.banned-api below. `proc.py` runs `git` and
 # `uv` by name so the user's own (version, config, credential helpers) are the
-# ones that run; resolving an absolute path would defeat that, and the
-# argument lists are constructed by this package, never taken from user input.
+# ones that run; resolving an absolute path would defeat that, and no shell is
+# involved -- argv is a list, so a branch name off the command line stays one
+# argument.
 'src/workshopify/fs.py' = ['TID251']
 'src/workshopify/proc.py' = ['S603', 'S607', 'TID251']
 # Tests assert (S101), shell out to `git` by name and reach for shutil to

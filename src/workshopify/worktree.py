@@ -1,7 +1,7 @@
 """The branch worktree a build publishes into: prepare it, inspect it, clear it.
 
 Generic worktree lifecycle helpers. `prepare_worktree` ensures the branch
-exists and is checked out as a git worktree, then returns the worktree path;
+exists and is checked out as a git worktree, then returns the prepared one;
 `is_dirty` and `clean` answer for and empty an already-prepared one. None of
 them run any generation or commit anything -- compose them with whatever
 produces content into the worktree, review the result, and commit yourself.
@@ -108,8 +108,7 @@ def _require_free(
     Three ways it is taken, and each has its own remedy, so each is named:
     another worktree lives there, something that is not a directory does, or a
     directory does and it has contents. Handing any of them to `git worktree
-    add` produces git's answer to a question the user did not ask -- or, for a
-    file where a directory was assumed, an ENOTDIR out of the check itself.
+    add` produces git's answer to a question the user did not ask.
     """
     if path in worktrees:
         held = worktrees[path]
@@ -141,11 +140,6 @@ def _holds_branch(
     path would publish into a directory the user did not name; the alternative
     to reusing this one is git's own refusal, which knows nothing about
     `git worktree remove` being the remedy.
-
-    The judgment only, so that constructing the worktree stays in the one
-    place that constructs it -- what is already there and what was just added
-    are the same answer, and would be reported differently if two callers
-    built it.
     """
     for existing_path, existing_branch in worktrees.items():
         if existing_branch != branch:

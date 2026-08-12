@@ -64,9 +64,7 @@ def _rebase(entry: FileEntry, config: Config, output_dir: Path) -> FileEntry:
     The scrubber resolves what its config names against the directory it read
     that config from, so the paths arriving here are absolute and point into
     the repo; output_dir may be a worktree. `Config.rebase` is what says where
-    such a path lands elsewhere -- without it a build writes its generated
-    notebooks over the source tree and reports success, which is the whole of
-    the symptom.
+    such a path lands elsewhere.
 
     The wrapper exists only for what rebase cannot know: which config entry
     handed it the path. An entry names three, and two of them do not name the
@@ -94,8 +92,8 @@ def _id_stem(stem: str) -> str:
 
     A filename honours neither half of nbformat's rule: `01.example`, a stem
     with a space, and a stem past 64 characters all mint ids that fail
-    validation in whatever reads the notebook next -- while this module writes
-    the file and reports success.
+    validation. nbformat rejects such an id where the notebook is next read
+    rather than where it is written, so it has to be prevented here.
 
     Every character rewritten or dropped is a character two stems could have
     differed by, so anything not already legal and short enough carries a
@@ -122,10 +120,7 @@ def _render(
     Returns the notes file written, or None. This is the code that decides
     whether there is one -- a configured notes-file is only written when the
     notebook has noted cells -- so it is the only place that can answer
-    without re-deriving the answer from the filesystem afterwards. Returning
-    the path rather than a bool keeps the "notes implies a notes_file"
-    invariant checkable where it is established, instead of leaving the caller
-    to re-assert it.
+    without re-deriving the answer from the filesystem afterwards.
     """
     stem = entry.input.stem
     src_py = config.root / config.notebooks.src / f'{stem}.py'

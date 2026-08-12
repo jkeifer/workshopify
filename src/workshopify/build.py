@@ -25,10 +25,10 @@ def _pairs(source: Path, dest: Path) -> list[tuple[Path, Path]]:
 
     The plan and the copies made from it come out of one traversal, so what a
     build reports and what it wrote cannot disagree. Walking the source
-    separately from copying it can: `shutil.copytree` descends into a
-    symlinked directory and `rglob('*')` does not, so everything under a
-    `data/link -> ../shared` is written by one and unknown to the other. This
-    walk is the copy's own and follows what the copy follows.
+    separately from copying it can, whenever the two disagree about a symlinked
+    directory: everything under a `data/link -> ../shared` is then written by
+    one and unknown to the other. This walk is the copy's own and follows what
+    the copy follows.
 
     Deriving the report from the destination instead goes wrong in the other
     direction: a rebuild merges into a worktree an earlier build wrote, so
@@ -36,8 +36,8 @@ def _pairs(source: Path, dest: Path) -> list[tuple[Path, Path]]:
     hidden from the cruft check that exists to find exactly those.
 
     The listing is `fs.glob`, which is where a failed one becomes a
-    diagnostic; nothing else here touches the filesystem, because nothing here
-    writes.
+    diagnostic; the only other filesystem call is the `is_dir` that decides
+    whether to recurse, because nothing here writes.
     """
     if not source.is_dir():
         return [(source, dest)]
@@ -54,7 +54,7 @@ def _include_source(config: Config, name: str) -> Path:
     An include entry is a single name used twice -- `root / name` to read and
     `staging / name` to write -- so a name that is not both relative and free
     of `..` breaks that pairing rather than the read. An absolute entry makes
-    the two the same path, and the copy an uncaught SameFileError; PurePath
+    the two the same path, and the copy a SameFileError; PurePath
     normalizes nothing, so `../shared` is read and written outside the
     worktree, whereupon `relative_to(staging)` succeeds lexically and the
     build reports `../shared/...` as cruft no --clean can ever resolve. Both

@@ -146,14 +146,13 @@ def test_build_diagnoses_an_asset_target_outside_the_repo_root(
 
 
 def test_a_directory_include_reports_every_file_it_writes(fixture_repo, tmp_path):
-    """The tree arm of _pairs, and the symlinked directory that broke its report.
+    """The tree arm of _pairs, and the symlinked directory its report must follow.
 
     A copy that follows a symlinked directory and a walk that does not recurse
-    into one disagree by everything under `data/link`: those files were
-    written and never reported, so `unwritten` called them cruft on every
-    build and --clean could never clear them -- it deletes what the next build
-    writes again, unreported. This is also the only test that copies a tree at
-    all, which is the whole reason _pairs exists.
+    into one disagree by everything under `data/link`: those files are written
+    and never reported, so `unwritten` calls them cruft on every build and
+    --clean cannot clear them -- it deletes what the next build writes again,
+    unreported.
     """
     shared = fixture_repo / 'shared'
     shared.mkdir()
@@ -238,11 +237,12 @@ def test_an_include_entry_that_climbs_out_of_the_repo_diagnoses(
 def test_every_copy_takes_its_mode_from_the_source(fixture_repo, tmp_path):
     """git records one bit of a file's mode, so a build must not vary it.
 
-    copyfile gives a fresh destination the umask's mode and an existing one
-    whatever mode it already had: setup.sh shipped executable from a directory
-    include but not as a single-file include, a static/ overlay, or an asset
-    -- and a rebuild into a reused worktree could give byte-identical content
-    a different git mode than a fresh build, which comparing bytes cannot see.
+    `copyfile` gives a fresh destination the umask's mode and an existing one
+    whatever mode it already had, so a `setup.sh` would ship executable down
+    one of these four paths and not the others, and a rebuild into a reused
+    worktree would give byte-identical content a different git mode than a
+    fresh build -- which comparing bytes cannot see. Every path here goes
+    through `fs.copy`, which is `shutil.copy`.
     """
     sources = ['setup.sh', 'bin/run.sh', 'static/launch.sh', 'assets/tool.sh']
     (fixture_repo / 'bin').mkdir()
@@ -530,8 +530,7 @@ def test_publish_into_overwrite_dirty_bypasses_the_guard(
     )
     assert published.written == {Path('built.txt')}
     assert len(calls) == 1, 'the build must run'
-    # The default build only writes. A dirty file it does not write survives,
-    # which is why "--overwrite-dirty discards them" was the wrong wording.
+    # The default build only writes. A dirty file it does not write survives.
     assert (wt / 'a.txt').read_text() == 'dirty'
 
 

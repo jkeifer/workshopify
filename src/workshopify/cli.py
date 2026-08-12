@@ -23,8 +23,8 @@ def _err(*lines: str) -> None:
 
     Progress, advisory notes and diagnostics alike go to stderr, so the one
     thing on stdout stays a value a caller can pipe. One helper rather than
-    `file=sys.stderr` on every call because that keyword is what wrapped the
-    longer lines below onto three lines apiece, hiding what they say.
+    `file=sys.stderr` on every call, so the keyword never crowds out the line
+    it is attached to.
     """
     for line in lines:
         print(line, file=sys.stderr)

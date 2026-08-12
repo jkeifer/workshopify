@@ -48,9 +48,10 @@ def test_generate_reports_each_written_file_exactly_once(
 ):
     """One write, one line, in one vocabulary and one path format.
 
-    notebooks.generate used to announce each write itself, and the CLI then
-    reported the same paths again from the list it returns -- every file named
-    twice, once relative and once absolute.
+    The CLI names every written file from the list `notebooks.generate`
+    returns, and is the only thing that names it: a generating step that
+    announced its own writes would name each file twice, once relative and
+    once absolute.
     """
     monkeypatch.chdir(fixture_repo)
     assert main(['generate']) == 0
@@ -74,9 +75,9 @@ def test_a_failure_from_cog_arrives_as_a_diagnostic_too(
 ):
     """The mistake an author actually makes: a generator that throws.
 
-    It comes out of cog, not out of workshopify, so it used to reach main()
-    as something other than a WorkshopifyError and land on the author as a
-    traceback through the package they were only using. Here at the CLI is
+    It comes out of cog, not out of workshopify, so undiagnosed it would reach
+    main() as something other than a WorkshopifyError and land on the author as
+    a traceback through the package they were only using. Here at the CLI is
     where that distinction is visible at all: whatever raised it, the author
     gets one `error:` line naming the file they have to fix, and exit 1.
     """

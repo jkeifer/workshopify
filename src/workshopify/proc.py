@@ -32,8 +32,8 @@ def run(argv: Sequence[str], cwd: Path) -> str:
 
     The command is invoked by name, not by absolute path, so the user's own git
     and uv -- their version, config, and credential helpers -- are the ones
-    that run. Every argument list is constructed by this package; none is taken
-    from user input.
+    that run. No shell is involved: argv is passed as a list, so a branch name
+    off the command line is one argument and can never become a second command.
     """
     with diagnosed(f'running {" ".join(argv)} in {cwd}', subprocess.SubprocessError):
         try:

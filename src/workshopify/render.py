@@ -53,7 +53,7 @@ from workshopify.errors import WorkshopifyError, diagnosed
 
 # HTML-comment forms of cog's markers, so a marker that ever leaked into
 # rendered markdown would at least be invisible. One definition, used by
-# every operation and stated in the docs -- do not vary per file.
+# every operation -- do not vary per file.
 MARKERS = ('<!--[[[cog', ']]]-->', '<!--[[[end]]]-->')
 
 # `md()` emits generator output as markdown-cell comment lines. It is defined
@@ -156,8 +156,8 @@ def apply(config: Config, ctx: Context) -> list[Path]:
     renamed out from under the context module -- are caught while the tree is
     still untouched. Both halves therefore name what they will do before
     either does any of it -- `writes` and `copies` are the whole of the
-    decision, and what is returned is those two rather than a tally kept
-    alongside the doing. The writes and copies themselves run in sequence, so
+    decision, and what is returned is those two. The writes and copies
+    themselves run in sequence, so
     a permissions error or a full disk partway through leaves the earlier ones
     applied. Buying atomicity there would mean staging every rendered file and
     every asset beside its target to guard against failures this rare.

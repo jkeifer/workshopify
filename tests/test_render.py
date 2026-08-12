@@ -287,16 +287,15 @@ def test_no_files_matched_diagnoses(fixture_repo):
 def test_apply_copies_an_asset_with_the_source_mode(fixture_repo):
     """The repo's own copy of an asset must carry the source's mode.
 
-    apply used copyfile, which mints a fresh destination's mode from the umask
-    rather than taking the source's, so an executable asset landed
-    non-executable in the repo and was committed that way. It never
-    self-healed: `_asset_problem` compares bytes only, so `check` could not
-    report the divergence, and apply copies only when bytes differ.
+    `assets._problem` compares bytes only, so a mode divergence in the repo's
+    own copy is invisible to `check` and never self-heals: apply copies only
+    when bytes differ. Taking the source's mode on the way in is the one thing
+    that keeps the checked-in file right.
 
-    The damage stops at the repo, not the published tree -- `build` re-copies
-    each asset from its *source* (build.py:99), never from the copy apply
-    wrote, and `test_every_copy_takes_its_mode_from_the_source` already pins
-    that leg. It is the checked-in file that was wrong.
+    The published tree is safe either way -- `build` re-copies each asset from
+    its *source*, never from the copy apply wrote, and
+    `test_every_copy_takes_its_mode_from_the_source` already pins that leg. It
+    is the checked-in file this pins.
     """
     script = fixture_repo / 'assets/tool.sh'
     script.write_text('#!/bin/sh\n')
@@ -326,8 +325,8 @@ def test_a_source_that_is_not_utf8_is_diagnosed(fixture_repo):
 
     `UnicodeDecodeError` is a `ValueError`, which `diagnosed` does not catch
     by default -- the same trap as `TOMLDecodeError`. Without it the module
-    that exists to abolish tracebacks at this boundary raised the one it had
-    just introduced, on every file matched by [tool.workshopify.render].
+    that exists to abolish tracebacks at this boundary would raise the one it
+    had just introduced, on every file matched by [tool.workshopify.render].
     """
     (fixture_repo / 'src/01_example.py').write_bytes(b'# %%\n# caf\xe9\n')
     config, ctx = load_workshop(fixture_repo)
@@ -338,7 +337,8 @@ def test_a_source_that_is_not_utf8_is_diagnosed(fixture_repo):
 @pytest.mark.skipif(os.geteuid() == 0, reason='root writes a read-only file anyway')
 def test_apply_diagnoses_a_write_it_cannot_make(fixture_repo):
     """apply's own docstring reasons about "a permissions error ... partway
-    through" -- a failure it discussed in prose and delivered as a traceback.
+    through" -- a failure it discusses in prose and must not deliver as a
+    traceback.
 
     The param is changed first so there is genuinely something to write: apply
     writes only what differs from what it would write, so against an unchanged

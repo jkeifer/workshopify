@@ -154,9 +154,8 @@ def test_refuses_a_path_holding_another_branch(tmp_path):
 def test_refuses_a_path_holding_a_detached_worktree(tmp_path):
     """A detached checkout emits no branch line, but the path is taken anyway.
 
-    Reading only branch lines lost the entry, and the collision was then
-    reported as a directory that "is not empty" -- true, and about the wrong
-    thing.
+    Reading only branch lines would lose the entry, and report the collision
+    as a directory that "is not empty" -- true, and about the wrong thing.
     """
     repo = git_repo(tmp_path / 'repo', {'a.txt': 'a'})
     subprocess.run(

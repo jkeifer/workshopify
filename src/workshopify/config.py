@@ -6,7 +6,7 @@ workshopify.context.
 
 The frozen dataclasses below hold every default there is. `load` passes only
 the keys pyproject.toml actually gave, so an absent key falls through to its
-field default rather than to a literal restated at the call site.
+field default.
 """
 
 from __future__ import annotations
@@ -105,7 +105,7 @@ def _sub[T: DataclassInstance](parent: _Table, name: str, target: type[T]) -> T:
     applies by being the only thing left. Nothing has to represent "not
     given".
 
-    The parsers are still resolved over every field rather than over the keys
+    The parsers are resolved over every field rather than over the keys
     given, so the vocabulary is checked on every load and not only when a
     workshop happens to set the field that exposes the gap. The same map then
     names the keys a table may hold, so the two cannot disagree about what
@@ -191,10 +191,11 @@ class Config:
     def within(self, path: Path, what: str) -> Path:
         """`path` as this repo spells it: relative to the root, or a refusal.
 
-        The judgment, separate from any use of it, because two callers want
-        different things from the same verdict: `rebase` wants somewhere to
-        put the answer, while `context` wants only to know that a declared
-        asset target is a place this repo has.
+        The judgment and the join are separate because both callers use what
+        comes back: `rebase` joins the spelling onto a destination, while
+        `context` reports it -- two declarations of one ASSETS target differ
+        precisely in how they spell it, so the repo's own spelling is what
+        names the duplicate.
 
         Both sides are resolved because one directory has more than one
         spelling: on macOS a path under /var and the same path under

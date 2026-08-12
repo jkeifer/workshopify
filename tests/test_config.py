@@ -150,13 +150,11 @@ def test_every_absent_key_takes_its_field_default(fixture_repo):
 
 
 def test_a_given_string_key_is_read(fixture_repo):
-    """The complement of the test above, and until now not covered at all.
+    """The complement of the test above: a string key the table actually gives.
 
-    Every parser used to run against every field whether the table gave it or
-    not, so `_string` handing back what it was given was exercised by absent
-    keys carrying None. Reading only the keys actually given made the hole
-    visible: nothing in the suite sets `branch` or `src`, which are the only
-    two string fields there are.
+    `branch` and `src` are the only two string fields there are, and nothing
+    else in the suite sets either -- so `_string` handing back what it was
+    given is only exercised here.
     """
     rewrite(
         fixture_repo,

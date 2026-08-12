@@ -53,7 +53,11 @@ def test_derive_preserves_comments_and_formatting():
 
 
 def test_derive_survives_a_multiline_string_containing_a_header():
-    """The hazard that killed the line-based parser: [tool.ruff] as prose."""
+    """A `[header]` inside a multiline string is prose, not a table.
+
+    Keeping only the tables `keep` names has to go through a TOML parser to
+    tell the two apart; scanning lines cannot.
+    """
     text = (
         '[project]\n'
         'name = "x"\n'
@@ -164,10 +168,11 @@ def test_derive_rejects_a_drop_path_matching_nothing():
 
 
 def test_derive_rejects_a_keep_path_listed_with_its_own_descendant():
-    """`tool.uv` and `tool.uv.sources` together used to ship only the narrow one.
+    """`tool.uv` and `tool.uv.sources` together have no one reading.
 
-    Silently: `package = false` vanished from the published pyproject, which
-    is the opposite of what naming the parent asks for.
+    Picking the narrow one is silent: `package = false` would vanish from the
+    published pyproject, which is the opposite of what naming the parent asks
+    for.
     """
     text = (
         '[project]\n'
