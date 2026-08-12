@@ -61,26 +61,13 @@ def _checked(table: _Table, known: set[str], where: str) -> _Table:
     return checked
 
 
-def _given(**values: Any) -> _Table:
-    """The keywords a value was actually given for.
-
-    What pyproject.toml leaves out is left out of the constructor call, so the
-    dataclass default -- the only default -- applies.
-    """
-    return {name: value for name, value in values.items() if value is not None}
-
-
-def _string(table: _Table, key: str, where: str) -> str | None:
-    value = table.get(key)
-    if value is not None and not isinstance(value, str):
+def _string(value: Any, key: str, where: str) -> str:
+    if not isinstance(value, str):
         raise WorkshopifyError(f'error: {where} {_toml_key(key)} must be a string')
     return value
 
 
-def _strings(table: _Table, key: str, where: str) -> tuple[str, ...] | None:
-    value = table.get(key)
-    if value is None:
-        return None
+def _strings(value: Any, key: str, where: str) -> tuple[str, ...]:
     if not isinstance(value, list) or not all(isinstance(i, str) for i in value):
         raise WorkshopifyError(
             f'error: {where} {_toml_key(key)} must be a list of strings',
@@ -91,7 +78,10 @@ def _strings(table: _Table, key: str, where: str) -> tuple[str, ...] | None:
 # How a subtable field is read, keyed by the annotation the dataclass gives it.
 # This is the vocabulary a subtable may be written in; a field annotated with
 # anything else has no reading, and `_sub` says so rather than guessing.
-_PARSERS: dict[Any, Callable[[_Table, str, str], Any]] = {
+#
+# A parser takes a value the table gave, never the table: what an absent key
+# means is the dataclass default, and that is settled before any of these run.
+_PARSERS: dict[Any, Callable[[Any, str, str], Any]] = {
     str: _string,
     tuple[str, ...]: _strings,
 }
@@ -111,22 +101,36 @@ def _sub[T: DataclassInstance](parent: _Table, name: str, target: type[T]) -> T:
     a bad pyproject.toml: no author can cause it and none can fix it, so it
     raises TypeError naming the field and the type, and arrives with the
     traceback a bug in this package wants, rather than as a bare KeyError.
+
+    Only the keys the table gave are parsed, so an absent one is absent from
+    the constructor call and the field default -- the only default there is --
+    applies by being the only thing left. Nothing has to represent "not
+    given", which is what a parser returning None to mean it, and a filter
+    downstream to take those Nones back out, were both for.
+
+    The parsers are still resolved over every field rather than over the keys
+    given, so the vocabulary is checked on every load and not only when a
+    workshop happens to set the field that exposes the gap. The same map then
+    names the keys a table may hold, so the two cannot disagree about what
+    this dataclass declares.
     """
     where = _where(name)
     table = parent.get(name, {})
     if not isinstance(table, dict):
         raise WorkshopifyError(f'error: {where} must be a table')
-    table = _checked(table, {f.name for f in fields(target)}, where)
     hints = get_type_hints(target)
-    values = {}
+    parsers = {}
     for f in fields(target):
-        parser = _PARSERS.get(hints[f.name])
-        if parser is None:
+        try:
+            parsers[f.name] = _PARSERS[hints[f.name]]
+        except KeyError:
             raise TypeError(
                 f'no config parser for {target.__name__}.{f.name}: {hints[f.name]}',
-            )
-        values[f.name] = parser(table, f.name, where)
-    return target(**_given(**values))
+            ) from None
+    given = _checked(table, set(parsers), where)
+    return target(
+        **{key: parsers[key](value, key, where) for key, value in given.items()},
+    )
 
 
 def _workshopify(pyproject: Path) -> _Table | None:

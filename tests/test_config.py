@@ -149,6 +149,30 @@ def test_every_absent_key_takes_its_field_default(fixture_repo):
             assert getattr(section, f.name) == f.default, f'{target.__name__}.{f.name}'
 
 
+def test_a_given_string_key_is_read(fixture_repo):
+    """The complement of the test above, and until now not covered at all.
+
+    Every parser used to run against every field whether the table gave it or
+    not, so `_string` handing back what it was given was exercised by absent
+    keys carrying None. Reading only the keys actually given made the hole
+    visible: nothing in the suite sets `branch` or `src`, which are the only
+    two string fields there are.
+    """
+    rewrite(
+        fixture_repo,
+        '[tool.workshopify.build]\n',
+        '[tool.workshopify.build]\nbranch = "pages"\n',
+    )
+    rewrite(
+        fixture_repo,
+        '[tool.workshopify.params]',
+        '[tool.workshopify.notebooks]\nsrc = "lessons"\n\n[tool.workshopify.params]',
+    )
+    config = Config.load(fixture_repo)
+    assert config.build.branch == 'pages'
+    assert config.notebooks.src == 'lessons'
+
+
 def test_a_field_of_an_unreadable_type_says_so():
     """A field of a type nothing parses is workshopify's bug, not a config error.
 
