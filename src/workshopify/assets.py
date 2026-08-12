@@ -1,10 +1,9 @@
 """The binary files a workshop carries rather than renders.
 
-An asset is a screenshot, a diagram, a data file -- something the repo ships
-byte for byte. The context module declares them in its ASSETS dict and
-workshopify.context resolves both halves of each pair against the repo root;
-what is left, and what lives here, is putting the file where it was declared
-to go and noticing when it is not there.
+An asset is a screenshot, a diagram, a data file: something the repo ships
+byte for byte. workshopify.context resolves both halves of each declared pair
+against the repo root, so what is left is putting each file where it was
+declared to go and noticing when it is not there.
 
 Three operations, over the loaded Context:
 
@@ -14,16 +13,13 @@ Three operations, over the loaded Context:
     errors(config, ctx)     one string per asset that is missing, uncopied, or
                             divergent
 
-`stale` and `apply` are two halves of one operation on purpose: deciding
-cannot be skipped, because deciding is what produces the list `apply` takes.
-See `stale`.
+`stale` decides and `apply` acts; see `stale` for why they are separate.
 
-This is the only part of `workshopify render` that is not about cog: an
-asset's content is a function of nothing but itself, which is the whole
-distinction between one and a rendered source. `build` copies assets a second
-time, from their sources into the published tree, and does not come through
-here -- it has a staging directory to rebase onto and no notion of staleness,
-the tree being new every time.
+Nothing here is about cog: an asset's content is a function of nothing but
+itself, which is the whole distinction between one and a rendered source.
+`build` copies assets a second time into the published tree without coming
+through here, having a staging directory to rebase onto and no notion of
+staleness, the tree being new every time.
 """
 
 from __future__ import annotations
@@ -65,9 +61,8 @@ def _problem(target: Path, source: Path) -> Problem | None:
 def _problems(ctx: Context) -> list[tuple[Path, Path, Problem]]:
     """Every declared asset that is wrong, with what is wrong with it.
 
-    One traversal, because both callers need the whole verdict before they act
-    on any of it. Sorted by target so the diagnostics and the copies come out
-    in the same order every run.
+    Sorted by target so the diagnostics and the copies come out in the same
+    order every run.
     """
     return [
         (target, source, problem)
@@ -79,16 +74,13 @@ def _problems(ctx: Context) -> list[tuple[Path, Path, Problem]]:
 def stale(ctx: Context) -> list[tuple[Path, Path]]:
     """The copies that would bring the repo up to date, or a refusal.
 
-    The deciding half, and it is separate from `apply` because the caller has
-    to be able to take it before it writes anything of its own: a screenshot
-    renamed out from under the context module must be caught while the tree is
-    still untouched, not between two files it has already rewritten.
+    Separate from `apply` because the caller must be able to decide before it
+    writes anything of its own: a screenshot renamed out from under the
+    context module has to be caught while the tree is still untouched, not
+    between two files already rewritten.
 
-    Both answers come out of one traversal -- whether any source is missing,
-    and what to copy -- so a caller cannot copy without having asked, and
-    cannot ask without getting the list it then copies from. The ordering
-    `render.apply` guarantees is therefore a value it holds rather than a rule
-    it remembers.
+    One traversal answers both -- whether a source is missing, and what to
+    copy -- so a caller cannot copy without having asked.
     """
     problems = _problems(ctx)
     missing = sorted(
@@ -108,8 +100,7 @@ def apply(stale: Iterable[tuple[Path, Path]]) -> list[Path]:
     """Make the copies `stale` decided on; the targets written.
 
     Sequential, so a permissions error partway leaves the earlier copies in
-    place. That is recoverable rather than atomic and deliberately so -- see
-    `render.apply`, whose guarantee this is half of.
+    place: recoverable rather than atomic, which `render.apply` explains.
     """
     written = []
     for target, source in stale:

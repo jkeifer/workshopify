@@ -155,12 +155,11 @@ def apply(config: Config, ctx: Context) -> list[Path]:
     two failures that actually happen -- a typo'd generator, a screenshot
     renamed out from under the context module -- are caught while the tree is
     still untouched. Both decisions are therefore taken before the first
-    write, in the two lines that open the body -- folding `assets.stale` into
-    the copy at the end would still copy the right files and would give up
-    exactly this. The writes and copies themselves run in sequence, so a
-    permissions error or a full disk partway through leaves the earlier ones
-    applied. Buying atomicity there would mean staging every rendered file and
-    every asset beside its target to guard against failures this rare.
+    write, in the two lines that open the body. The writes and copies
+    themselves run in sequence, so a permissions error or a full disk partway
+    through leaves the earlier ones applied. Buying atomicity there would mean
+    staging every rendered file and every asset beside its target to guard
+    against failures this rare.
 
     Recoverable rather than atomic, then, and that is enough because apply is
     idempotent: it writes only what differs from what it would write, so a
