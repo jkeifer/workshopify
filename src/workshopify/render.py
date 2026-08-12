@@ -23,6 +23,10 @@ apply and check work from the Config, over every file it names; publish works
 over the text of one source file, so it takes that text and the name to
 report it by instead.
 
+The asset half of apply and check is workshopify.assets': a file copied
+verbatim has nothing to do with cog, and all this module does with one is
+sequence it against the rendering.
+
 Failures raise WorkshopifyError/PublishError; deciding to exit is the CLI's
 job, never this module's.
 """
@@ -34,7 +38,6 @@ import difflib
 import io
 
 from contextlib import redirect_stdout
-from enum import Enum, auto
 from pathlib import Path
 from typing import Any
 
@@ -43,7 +46,7 @@ import jupytext
 from cogapp import Cog
 from cogapp.cogapp import CogError
 
-from workshopify import fs
+from workshopify import assets, fs
 from workshopify.config import Config
 from workshopify.context import Context
 from workshopify.errors import WorkshopifyError, diagnosed
@@ -143,61 +146,6 @@ def _rendered(config: Config, ctx: Context) -> dict[Path, str]:
     }
 
 
-class AssetProblem(Enum):
-    """What is wrong with one declared asset. See `_asset_problem`."""
-
-    NO_SOURCE = auto()
-    NOT_COPIED = auto()
-    DIFFERS = auto()
-
-
-def _asset_problem(target: Path, source: Path) -> AssetProblem | None:
-    """The single statement of what makes an asset wrong; None if it is right.
-
-    What a problem costs is the caller's call, and the two callers price them
-    differently: to check() all three are errors, while to apply() only a
-    missing source is -- the other two are the work it exists to do.
-    """
-    if not source.is_file():
-        return AssetProblem.NO_SOURCE
-    if not target.is_file():
-        return AssetProblem.NOT_COPIED
-    if fs.read_bytes(target) != fs.read_bytes(source):
-        return AssetProblem.DIFFERS
-    return None
-
-
-def _problems(ctx: Context) -> list[tuple[Path, Path, AssetProblem]]:
-    """Every declared asset that is wrong, with what is wrong with it.
-
-    One traversal, because both callers need the whole verdict before they act
-    on any of it: apply must know that no source is missing before it copies
-    the first file, and deriving that from the same list it then copies from
-    makes the ordering a step it takes rather than an unwritten rule holding
-    between separate loops. Sorted by target so the diagnostics and the copies
-    come out in the same order every run.
-    """
-    return [
-        (target, source, problem)
-        for target, source in sorted(ctx.assets.items())
-        if (problem := _asset_problem(target, source)) is not None
-    ]
-
-
-def _asset_errors(config: Config, ctx: Context) -> list[str]:
-    errors = []
-    for target, source, problem in _problems(ctx):
-        name = config.display_path(target)
-        match problem:
-            case AssetProblem.NO_SOURCE:
-                errors.append(f'{source}: missing; cannot check {name}')
-            case AssetProblem.NOT_COPIED:
-                errors.append(f'{name}: missing (expected a copy of {source})')
-            case AssetProblem.DIFFERS:
-                errors.append(f'{name}: does not match {source}')
-    return errors
-
-
 def apply(config: Config, ctx: Context) -> list[Path]:
     """Re-render every configured file and asset in place; what changed.
 
@@ -206,7 +154,10 @@ def apply(config: Config, ctx: Context) -> list[Path]:
     every asset source verified to exist before anything is written, so the
     two failures that actually happen -- a typo'd generator, a screenshot
     renamed out from under the context module -- are caught while the tree is
-    still untouched. The writes and copies themselves run in sequence, so a
+    still untouched. Both decisions are therefore taken before the first
+    write, in the two lines that open the body -- folding `assets.stale` into
+    the copy at the end would still copy the right files and would give up
+    exactly this. The writes and copies themselves run in sequence, so a
     permissions error or a full disk partway through leaves the earlier ones
     applied. Buying atomicity there would mean staging every rendered file and
     every asset beside its target to guard against failures this rare.
@@ -217,26 +168,13 @@ def apply(config: Config, ctx: Context) -> list[Path]:
     converges. A run with nothing to do writes nothing and returns [].
     """
     rendered = _rendered(config, ctx)
-    problems = _problems(ctx)
-    missing = sorted(
-        source for _, source, problem in problems if problem is AssetProblem.NO_SOURCE
-    )
-    if missing:
-        raise WorkshopifyError(
-            f'error: asset source(s) do not exist: '
-            f'{", ".join(str(s) for s in missing)}',
-        )
+    stale = assets.stale(ctx)
     changed = []
     for path, text in rendered.items():
         if fs.read(path) != text:
             fs.write(path, text)
             changed.append(path)
-    # Every remaining problem is one a copy fixes: NO_SOURCE was the only kind
-    # apply treats as an error, and it has already raised.
-    for target, source, _ in problems:
-        fs.copy(source, target)
-        changed.append(target)
-    return changed
+    return changed + assets.apply(stale)
 
 
 def check(config: Config, ctx: Context) -> list[str]:
@@ -256,7 +194,7 @@ def check(config: Config, ctx: Context) -> list[str]:
             n=0,
         )
         errors.append('\n'.join([f'{name}: stale rendered values', *diff]))
-    return errors + _asset_errors(config, ctx)
+    return errors + assets.errors(config, ctx)
 
 
 def publish(ctx: Context, text: str, fname: str = '<src>') -> str:

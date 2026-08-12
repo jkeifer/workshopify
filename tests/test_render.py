@@ -114,10 +114,17 @@ def test_stale_asset_is_replaced(fixture_repo):
 
 
 def test_apply_refuses_a_missing_asset_source_before_writing(fixture_repo):
+    # The param is rewritten first so there is genuinely a write pending: what
+    # is asserted is the ordering, that apply asks assets for its verdict
+    # before it writes the rendered text, and against an unchanged tree apply
+    # would write nothing either way.
+    rewrite(fixture_repo, 'greeting = "hello"', 'greeting = "tena koe"')
     (fixture_repo / 'assets/logo.png').unlink()
     config, ctx = load_workshop(fixture_repo)
+    before = _snapshot(fixture_repo)
     with pytest.raises(WorkshopifyError, match=r'logo\.png'):
         render.apply(config, ctx)
+    assert _snapshot(fixture_repo) == before
 
 
 def test_check_reports_a_missing_asset_source(fixture_repo):
