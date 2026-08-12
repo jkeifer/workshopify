@@ -303,7 +303,7 @@ def test_write_deps_produces_a_lock(fixture_repo, tmp_path):
     assert 'dependency-groups' not in data
 
 
-# --- unwritten / is_dirty / clean ------------------------------------------
+# --- unwritten -------------------------------------------------------------
 
 
 def _commit_all(wt):
@@ -326,30 +326,6 @@ def test_unwritten_ignores_untracked_files(tmp_path):
     _commit_all(wt)
     (wt / 'scratch.txt').write_text('b')
     assert build.unwritten(wt, {Path('tracked.txt')}) == []
-
-
-def test_is_dirty_detects_modified_and_untracked(tmp_path):
-    wt = git_repo(tmp_path / 'wt')
-    (wt / 'a.txt').write_text('a')
-    _commit_all(wt)
-    assert not build.is_dirty(wt)
-    (wt / 'a.txt').write_text('changed')
-    assert build.is_dirty(wt)
-    (wt / 'a.txt').write_text('a')
-    assert not build.is_dirty(wt)
-    (wt / 'new.txt').write_text('n')
-    assert build.is_dirty(wt)
-
-
-def test_clean_removes_tracked_files_only(tmp_path):
-    wt = git_repo(tmp_path / 'wt')
-    (wt / 'tracked.txt').write_text('a')
-    _commit_all(wt)
-    (wt / 'ignored.txt').write_text('i')
-    (wt / '.gitignore').write_text('ignored.txt\n')
-    build.clean(wt)
-    assert not (wt / 'tracked.txt').exists()
-    assert (wt / 'ignored.txt').exists(), 'ignored files must survive'
 
 
 # --- publish_into ----------------------------------------------------------

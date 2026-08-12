@@ -20,7 +20,7 @@ from typing import Any
 
 import tomlkit
 
-from workshopify import notebooks
+from workshopify import notebooks, worktree
 from workshopify.config import Config
 from workshopify.context import Context
 from workshopify.errors import WorkshopifyError
@@ -189,13 +189,12 @@ def build(config: Config, ctx: Context, staging: Path) -> set[Path]:
     return {p.relative_to(staging) for p in written}
 
 
-def is_dirty(worktree: Path) -> bool:
-    """True if the worktree has uncommitted changes, tracked or untracked."""
-    return bool(git(worktree, 'status', '--porcelain').strip())
-
-
-def unwritten(worktree: Path, written: set[Path]) -> list[Path]:
+def unwritten(target: Path, written: set[Path]) -> list[Path]:
     """Tracked files this build did not write.
+
+    Lives here rather than in `worktree.py` with the other git-shelling
+    helpers because the question it answers is about the build: it is only
+    meaningful against a build's output set, and only a build has one.
 
     A stale tracked file shows in `git status` as nothing at all, because it
     is unchanged -- so without this, a renamed exercise leaves its old file on
@@ -206,25 +205,8 @@ def unwritten(worktree: Path, written: set[Path]) -> list[Path]:
     match a Path from build() -- it would be reported as cruft forever, and
     --clean could never resolve it.
     """
-    tracked = {
-        Path(name) for name in git(worktree, 'ls-files', '-z').split('\0') if name
-    }
+    tracked = {Path(name) for name in git(target, 'ls-files', '-z').split('\0') if name}
     return sorted(tracked - written)
-
-
-def clean(worktree: Path) -> None:
-    """Remove every tracked file. Ignored files survive deliberately.
-
-    git rm rather than rm -rf, so git decides what is removable -- and any
-    large ignored cache under the worktree is not refetched.
-
-    -f because git rm refuses a file with local modifications otherwise. This
-    is only reachable in two states: the dirty guard passed, so the worktree
-    is clean and -f changes nothing; or the user passed --overwrite-dirty,
-    which authorises losing uncommitted worktree changes -- exactly what -f
-    does. Forcing is correct in both, not a workaround for the error.
-    """
-    git(worktree, 'rm', '-r', '-f', '--quiet', '--ignore-unmatch', '.')
 
 
 @dataclass(frozen=True)
@@ -255,7 +237,7 @@ def publish_into(
     -- as a WorkshopifyError. The CLI is the boundary that decides what one
     costs; this layer never exits, and never prints.
     """
-    if is_dirty(target) and not overwrite_dirty:
+    if worktree.is_dirty(target) and not overwrite_dirty:
         raise WorkshopifyError(
             f'error: {target} has uncommitted changes.\n'
             '  They may be an unpublished build, or notebook edits made in '
@@ -268,7 +250,7 @@ def publish_into(
         )
 
     if clean_first:
-        clean(target)
+        worktree.clean(target)
 
     written = build(config, ctx, target)
     return Published(written, unwritten(target, written))

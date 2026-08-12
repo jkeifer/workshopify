@@ -1,10 +1,10 @@
-"""Prepare a git worktree for a branch, creating the branch if needed.
+"""The branch worktree a build publishes into: prepare it, inspect it, clear it.
 
-Generic worktree lifecycle helper: given a branch name and a path, this ensures
-the branch exists and is checked out as a git worktree, then returns the
-worktree path. It does *not* run any generation or commit anything -- compose it
-with whatever produces content into the worktree, review the result, and commit
-yourself.
+Generic worktree lifecycle helpers. `prepare_worktree` ensures the branch
+exists and is checked out as a git worktree, then returns the worktree path;
+`is_dirty` and `clean` answer for and empty an already-prepared one. None of
+them run any generation or commit anything -- compose them with whatever
+produces content into the worktree, review the result, and commit yourself.
 """
 
 from __future__ import annotations
@@ -28,6 +28,26 @@ class Worktree:
 
     path: Path
     notes: tuple[str, ...] = ()
+
+
+def is_dirty(worktree: Path) -> bool:
+    """True if the worktree has uncommitted changes, tracked or untracked."""
+    return bool(git(worktree, 'status', '--porcelain').strip())
+
+
+def clean(worktree: Path) -> None:
+    """Remove every tracked file. Ignored files survive deliberately.
+
+    git rm rather than rm -rf, so git decides what is removable -- and any
+    large ignored cache under the worktree is not refetched.
+
+    -f because git rm refuses a file with local modifications otherwise. This
+    is only reachable in two states: the dirty guard passed, so the worktree
+    is clean and -f changes nothing; or the user passed --overwrite-dirty,
+    which authorises losing uncommitted worktree changes -- exactly what -f
+    does. Forcing is correct in both, not a workaround for the error.
+    """
+    git(worktree, 'rm', '-r', '-f', '--quiet', '--ignore-unmatch', '.')
 
 
 def _branch_exists(root: Path, branch: str) -> bool:

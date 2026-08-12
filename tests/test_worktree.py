@@ -7,7 +7,7 @@ import pytest
 from conftest import git_repo
 
 from workshopify.errors import WorkshopifyError
-from workshopify.worktree import prepare_worktree
+from workshopify.worktree import clean, is_dirty, prepare_worktree
 
 
 def _repo_with_commit(tmp_path: Path, name: str = 'origin_repo') -> Path:
@@ -16,6 +16,14 @@ def _repo_with_commit(tmp_path: Path, name: str = 'origin_repo') -> Path:
     subprocess.run(['git', 'add', '-A'], cwd=repo, check=True)
     subprocess.run(['git', 'commit', '-qm', 'init'], cwd=repo, check=True)
     return repo
+
+
+def _commit_all(wt):
+    subprocess.run(['git', 'add', '-A'], cwd=wt, check=True)
+    subprocess.run(['git', 'commit', '-qm', 'x'], cwd=wt, check=True)
+
+
+# --- prepare_worktree ------------------------------------------------------
 
 
 def test_creates_a_new_branch_from_head(tmp_path):
@@ -108,3 +116,30 @@ def test_prunes_a_stale_registration(tmp_path):
     shutil.rmtree(wt.path)
     # The stale registration would otherwise block re-adding the branch.
     assert prepare_worktree(repo, 'pub', repo / 'pub', orphan=False).path == wt.path
+
+
+# --- is_dirty / clean ------------------------------------------------------
+
+
+def test_is_dirty_detects_modified_and_untracked(tmp_path):
+    wt = git_repo(tmp_path / 'wt')
+    (wt / 'a.txt').write_text('a')
+    _commit_all(wt)
+    assert not is_dirty(wt)
+    (wt / 'a.txt').write_text('changed')
+    assert is_dirty(wt)
+    (wt / 'a.txt').write_text('a')
+    assert not is_dirty(wt)
+    (wt / 'new.txt').write_text('n')
+    assert is_dirty(wt)
+
+
+def test_clean_removes_tracked_files_only(tmp_path):
+    wt = git_repo(tmp_path / 'wt')
+    (wt / 'tracked.txt').write_text('a')
+    _commit_all(wt)
+    (wt / 'ignored.txt').write_text('i')
+    (wt / '.gitignore').write_text('ignored.txt\n')
+    clean(wt)
+    assert not (wt / 'tracked.txt').exists()
+    assert (wt / 'ignored.txt').exists(), 'ignored files must survive'

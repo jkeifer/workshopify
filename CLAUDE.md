@@ -14,7 +14,7 @@ The package is a src-layout library with one command-line surface.
 | `render.py` | The cog render engine: rendering values in place, checking they are current, and stripping the templating for publication. |
 | `notebooks.py` | `src/*.py` to completed notebooks to exercise notebooks and notes, via jupytext and ipynb-scrubber. |
 | `build.py` | Assembles the published tree and publishes it into a worktree. |
-| `worktree.py` | Prepares the branch worktree a build publishes into. |
+| `worktree.py` | Owns the branch worktree a build publishes into: prepares it, and reports on or empties an already-prepared one. |
 | `params.py` | Rewrites `[tool.workshopify.params]` values in pyproject.toml. |
 | `git.py` | The single git subprocess helper. |
 | `errors.py` | `WorkshopifyError`. |
