@@ -12,9 +12,9 @@ from __future__ import annotations
 
 import shutil
 import subprocess
-import sys
 
 from collections.abc import MutableMapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -227,6 +227,20 @@ def clean(worktree: Path) -> None:
     git(worktree, 'rm', '-r', '-f', '--quiet', '--ignore-unmatch', '.')
 
 
+@dataclass(frozen=True)
+class Published:
+    """What a publish produced, both halves relative to the worktree root.
+
+    `written` is what the build wrote; `stale` is what it did not but the
+    branch tracks anyway -- a renamed exercise still shipping its old file.
+    The caller reports them, so the two arrive together rather than one being
+    printed here and the other returned.
+    """
+
+    written: set[Path]
+    stale: list[Path]
+
+
 def publish_into(
     config: Config,
     ctx: Context,
@@ -234,12 +248,12 @@ def publish_into(
     *,
     clean_first: bool,
     overwrite_dirty: bool,
-) -> int:
-    """The publish itself: guard, clean, build, then report cruft.
+) -> Published:
+    """The publish itself: guard, clean, build, then look for cruft.
 
     Reports every failure -- its own guard's, and those of the steps it calls
     -- as a WorkshopifyError. The CLI is the boundary that decides what one
-    costs; this layer never exits.
+    costs; this layer never exits, and never prints.
     """
     if is_dirty(target) and not overwrite_dirty:
         raise WorkshopifyError(
@@ -257,31 +271,4 @@ def publish_into(
         clean(target)
 
     written = build(config, ctx, target)
-
-    print(f'built into {target}', file=sys.stderr)
-    print(f'review with: git -C {target} status', file=sys.stderr)
-    print('publish with:', file=sys.stderr)
-    print(f'  git -C {target} add -A', file=sys.stderr)
-    print(
-        f'  PREK_ALLOW_NO_CONFIG=1 git -C {target} commit -m "Update notebooks"',
-        file=sys.stderr,
-    )
-    print(f'  git -C {target} push', file=sys.stderr)
-    print(
-        'PREK_ALLOW_NO_CONFIG=1 is required: git hooks are shared across all '
-        'worktrees,\n'
-        'and the workshop branch intentionally carries no pre-commit config.',
-        file=sys.stderr,
-    )
-
-    # Printed last, after the success output above, so the one failure this
-    # report exists to catch -- a renamed exercise shipping silently -- does
-    # not scroll off above the happy path.
-    stale = unwritten(target, written)
-    if stale:
-        print('not written by this build:', file=sys.stderr)
-        for path in stale:
-            print(f'  {path}', file=sys.stderr)
-        print('re-run with --clean to remove', file=sys.stderr)
-
-    return 0
+    return Published(written, unwritten(target, written))

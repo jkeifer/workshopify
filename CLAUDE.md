@@ -25,6 +25,11 @@ The package is a src-layout library with one command-line surface.
 - **Nothing below `cli.py` exits the process.** Every module raises
   `WorkshopifyError` carrying the full diagnostic; `cli.py` prints it to stderr
   and returns 1. Do not add `sys.exit` anywhere else.
+- **Nothing below `cli.py` writes to stdout or stderr.** Every module returns
+  what it computed -- paths written, stale files, advisory notes -- and
+  `cli.py` decides what the user sees, in what order, and in what form. Do not
+  add `print` anywhere else; `cli.py` holds the only `T201` ignore, so ruff
+  enforces this.
 - **Generated output is a pure function of its source.** Notebook cell ids are
   positional, not random, so re-rendering an unchanged source produces a
   byte-identical file and a publish diff contains only real changes.
@@ -35,8 +40,4 @@ The package is a src-layout library with one command-line surface.
 
 ## Known rough edges
 
-- `build.py` prints progress and publish instructions to stderr from library
-  code instead of returning a result for `cli.py` to render. It is why
-  `build.py` carries a `T201` ignore, and it should be fixed rather than
-  entrenched.
 - `__init__.py` is empty; the package has no curated public API yet.

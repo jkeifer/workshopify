@@ -446,16 +446,14 @@ def test_publish_into_overwrite_dirty_bypasses_the_guard(
     calls = []
     monkeypatch.setattr(build, 'build', _recording_build(calls))
 
-    assert (
-        build.publish_into(
-            config,
-            ctx,
-            wt,
-            clean_first=False,
-            overwrite_dirty=True,
-        )
-        == 0
+    published = build.publish_into(
+        config,
+        ctx,
+        wt,
+        clean_first=False,
+        overwrite_dirty=True,
     )
+    assert published.written == {Path('built.txt')}
     assert len(calls) == 1, 'the build must run'
     # The default build only writes. A dirty file it does not write survives,
     # which is why "--overwrite-dirty discards them" was the wrong wording.
@@ -483,26 +481,23 @@ def test_publish_into_clean_overwrite_dirty_removes_a_modified_tracked_file(
     calls = []
     monkeypatch.setattr(build, 'build', _recording_build(calls))
 
-    assert (
-        build.publish_into(
-            config,
-            ctx,
-            wt,
-            clean_first=True,
-            overwrite_dirty=True,
-        )
-        == 0
+    build.publish_into(
+        config,
+        ctx,
+        wt,
+        clean_first=True,
+        overwrite_dirty=True,
     )
     assert not (wt / 'a.txt').exists(), 'the modified tracked file must be removed'
     assert (wt / 'built.txt').exists()
 
 
-def test_publish_into_reports_a_tracked_file_the_build_did_not_write(
+def test_publish_into_returns_a_tracked_file_the_build_did_not_write(
     fixture_repo,
     tmp_path,
     monkeypatch,
-    capsys,
 ):
+    """The cruft report is data, not output; the CLI decides how to show it."""
     config, ctx = _setup(fixture_repo)
     wt = git_repo(tmp_path / 'wt')
     (wt / 'orphan.txt').write_text('o')
@@ -511,17 +506,26 @@ def test_publish_into_reports_a_tracked_file_the_build_did_not_write(
     calls = []
     monkeypatch.setattr(build, 'build', _recording_build(calls))
 
-    assert (
-        build.publish_into(
-            config,
-            ctx,
-            wt,
-            clean_first=False,
-            overwrite_dirty=False,
-        )
-        == 0
+    published = build.publish_into(
+        config,
+        ctx,
+        wt,
+        clean_first=False,
+        overwrite_dirty=False,
     )
-    err = capsys.readouterr().err
-    assert 'not written by this build:' in err
-    assert 'orphan.txt' in err
-    assert '--clean' in err
+    assert published.written == {Path('built.txt')}
+    assert published.stale == [Path('orphan.txt')]
+
+
+def test_publish_into_says_nothing(fixture_repo, tmp_path, monkeypatch, capsys):
+    """Every line the user sees is the CLI's to print, not this layer's."""
+    config, ctx = _setup(fixture_repo)
+    wt = git_repo(tmp_path / 'wt')
+    (wt / 'orphan.txt').write_text('o')
+    _commit_all(wt)
+    monkeypatch.setattr(build, 'build', _recording_build([]))
+
+    build.publish_into(config, ctx, wt, clean_first=False, overwrite_dirty=False)
+
+    captured = capsys.readouterr()
+    assert (captured.out, captured.err) == ('', '')

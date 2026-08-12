@@ -82,14 +82,75 @@ def test_worktree_subcommand(fixture_repo, monkeypatch, capsys):
     assert 'creating it from' in captured.err
 
 
-def test_build_publishes_into_the_branch_worktree(fixture_repo, monkeypatch):
+def _committed_repo(fixture_repo):
     from conftest import git_repo
 
     git_repo(fixture_repo)
     subprocess.run(['git', 'add', '-A'], cwd=fixture_repo, check=True)
     subprocess.run(['git', 'commit', '-qm', 'x'], cwd=fixture_repo, check=True)
+    return fixture_repo
+
+
+def test_build_publishes_into_the_branch_worktree(fixture_repo, monkeypatch, capsys):
+    _committed_repo(fixture_repo)
     subprocess.run(['uv', 'lock'], cwd=fixture_repo, check=True)
     monkeypatch.chdir(fixture_repo)
     assert main(['build']) == 0
     assert (fixture_repo / 'workshop' / 'Dockerfile').is_file()
     assert (fixture_repo / 'workshop' / 'notebooks' / '01_example.ipynb').is_file()
+
+    err = capsys.readouterr().err
+    target = (fixture_repo / 'workshop').resolve()
+    assert f'built into {target}' in err
+    assert f'review with: git -C {target} status' in err
+    assert f'  git -C {target} add -A' in err
+    assert f'PREK_ALLOW_NO_CONFIG=1 git -C {target} commit' in err
+    assert f'  git -C {target} push' in err
+    assert 'git hooks are shared across all worktrees' in err
+
+
+def test_build_reports_stale_files_after_the_publish_instructions(
+    fixture_repo,
+    monkeypatch,
+    capsys,
+):
+    """The cruft report goes last, so it does not scroll off above the happy path.
+
+    A renamed exercise still shipping its old file is the one failure this
+    report exists to catch; it is worth nothing printed above five lines of
+    git incantations.
+    """
+    from workshopify import build
+
+    _committed_repo(fixture_repo)
+    monkeypatch.chdir(fixture_repo)
+    # The worktree is branched off HEAD, so everything committed above is
+    # tracked there and none of it is written by this stubbed build.
+    monkeypatch.setattr(build, 'build', lambda config, ctx, staging: set())
+
+    assert main(['build']) == 0
+
+    err = capsys.readouterr().err
+    assert 'not written by this build:' in err
+    assert '  Dockerfile' in err
+    assert 're-run with --clean to remove' in err
+    assert err.index('publish with:') < err.index('not written by this build:')
+
+
+def test_build_stays_quiet_about_cruft_when_there_is_none(
+    fixture_repo,
+    monkeypatch,
+    capsys,
+):
+    """--clean untracks everything, so the report has nothing to say."""
+    from workshopify import build
+
+    _committed_repo(fixture_repo)
+    monkeypatch.chdir(fixture_repo)
+    monkeypatch.setattr(build, 'build', lambda config, ctx, staging: set())
+
+    assert main(['build', '--clean']) == 0
+
+    err = capsys.readouterr().err
+    assert 'built into' in err
+    assert 'not written by this build:' not in err

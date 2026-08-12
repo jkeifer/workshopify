@@ -83,12 +83,12 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-# The CLI is the one place a failure becomes output, and these modules report
-# progress to stderr by design. That `build.py` reports from library code
-# rather than returning a result for the CLI to print is a real design smell,
-# scheduled for the CLI/API pass -- not something to paper over permanently.
-'src/workshopify/build.py' = ['T201', 'S607']
+# The CLI is the one place output happens: every other module returns what it
+# computed and lets `cli.py` render it. This is the only sanctioned T201, and
+# it is what makes that invariant enforced rather than merely documented.
 'src/workshopify/cli.py' = ['T201']
+# `uv` is invoked by name so the lock is derived with the user's own uv.
+'src/workshopify/build.py' = ['S607']
 # `git` is invoked by name so the user's git (version, config, credential
 # helpers) is the one that runs; resolving an absolute path would defeat that.
 # The argument lists are constructed here, never taken from user input.
