@@ -329,6 +329,36 @@ def test_overlapping_include_entries_are_not_a_collision(fixture_repo, tmp_path)
     assert (tmp_path / 'docs/index.md').read_text() == 'hi'
 
 
+def test_a_repetition_is_planned_once_and_copied_once(
+    fixture_repo,
+    tmp_path,
+    monkeypatch,
+):
+    """Allowing a repetition is not the same as doing the work twice.
+
+    The plan is keyed by destination, so the three spellings below are one
+    copy. Two of them name a directory, which is the case worth counting: a
+    tree included alongside a file inside it would otherwise be walked and
+    written whole a second time for the sake of one path.
+    """
+    docs = fixture_repo / 'docs'
+    docs.mkdir()
+    (docs / 'index.md').write_text('hi')
+    _set_include(fixture_repo, 'docs', 'docs/index.md', 'docs')
+    uv_lock(fixture_repo)
+    config, ctx = load_workshop(fixture_repo)
+
+    copied = []
+    real = build.fs.copy
+    monkeypatch.setattr(
+        build.fs,
+        'copy',
+        lambda source, dest: (copied.append(dest), real(source, dest))[1],
+    )
+    build.build(config, ctx, tmp_path)
+    assert [d for d in copied if d.name == 'index.md'] == [tmp_path / 'docs/index.md']
+
+
 def test_an_include_entry_that_names_nothing_copies_nothing(fixture_repo, tmp_path):
     """The refusal comes before the first copy, not between two of them.
 

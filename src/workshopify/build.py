@@ -93,7 +93,7 @@ class _Tree:
 
     staging: Path
     sources: dict[Path, tuple[Path | str, str]] = field(default_factory=dict)
-    copies: list[tuple[Path, Path]] = field(default_factory=list)
+    copies: dict[Path, Path] = field(default_factory=dict)
 
     def _place(self, dest: Path, origin: Path | str, label: str) -> None:
         relative = dest.relative_to(self.staging)
@@ -106,14 +106,23 @@ class _Tree:
             )
 
     def to_copy(self, pairs: list[tuple[Path, Path]], label: str) -> None:
-        """Plan these copies. Nothing is written until `copy_all`."""
+        """Plan these copies. Nothing is written until `copy_all`.
+
+        Keyed by destination, which is the rule `_place` has just enforced: a
+        repetition it allowed through -- one entry named twice, or a directory
+        entry overlapping a file in it -- is one copy planned, not two made of
+        the same bytes. A dict rather than a set because `copy_all` iterates
+        this, and a set's order is its hashes': the same build would copy in a
+        different order on every run, and one that failed partway would leave
+        a different half of the tree behind each time.
+        """
         for source, dest in pairs:
             self._place(dest, source, label)
-        self.copies.extend(pairs)
+            self.copies[dest] = source
 
     def copy_all(self) -> None:
         """Make every planned copy, in the order planned. Mode is the source's."""
-        for source, dest in self.copies:
+        for dest, source in self.copies.items():
             fs.copy(source, dest)
 
     def generated(self, paths: list[Path], label: str) -> None:
