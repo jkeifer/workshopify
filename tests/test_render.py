@@ -1,13 +1,33 @@
+import shutil
+
+from pathlib import Path
+
 import pytest
 
 from workshopify import context, render
 from workshopify.config import Config
 from workshopify.errors import WorkshopifyError
 
+TWO_ASSETS = """\
+ASSETS = {
+    'notebooks/assets/logo.png': 'assets/logo.png',
+    'notebooks/assets/second.png': 'assets/second.png',
+}
+"""
+
 
 def _setup(fixture_repo):
     config = Config.load(fixture_repo)
     return config, context.load(config)
+
+
+def _snapshot(root):
+    """Every file in the tree by content and mtime, to prove nothing wrote."""
+    return {
+        p: (p.read_bytes(), p.stat().st_mtime_ns)
+        for p in sorted(root.rglob('*'))
+        if p.is_file()
+    }
 
 
 def test_fresh_fixture_renders_clean(fixture_repo):
@@ -66,6 +86,47 @@ def test_apply_refuses_a_missing_asset_source_before_writing(fixture_repo):
     config, ctx = _setup(fixture_repo)
     with pytest.raises(WorkshopifyError, match=r'logo\.png'):
         render.apply(config, ctx)
+
+
+def test_apply_is_idempotent(fixture_repo):
+    # The claim apply's docstring makes: a second run writes nothing at all,
+    # so the tree -- contents and mtimes alike -- is untouched.
+    config, ctx = _setup(fixture_repo)
+    render.apply(config, ctx)
+    before = _snapshot(fixture_repo)
+    assert render.apply(config, ctx) == []
+    assert _snapshot(fixture_repo) == before
+
+
+def test_apply_converges_after_a_partial_asset_failure(fixture_repo, monkeypatch):
+    # The copies are sequential, so a failure partway leaves the earlier ones
+    # applied -- and re-running apply once the cause is cleared copies only
+    # the remainder.
+    (fixture_repo / 'assets/second.png').write_bytes(b'\x89PNG second')
+    context_py = fixture_repo / 'context.py'
+    context_py.write_text(
+        context_py.read_text().split('ASSETS = ')[0] + TWO_ASSETS,
+    )
+    config, ctx = _setup(fixture_repo)
+    logo = fixture_repo / 'notebooks/assets/logo.png'
+    second = fixture_repo / 'notebooks/assets/second.png'
+    copyfile = shutil.copyfile
+
+    def fail_on_second(source, target, **kwargs):
+        if Path(target).name == 'second.png':
+            raise PermissionError(target)
+        return copyfile(source, target, **kwargs)
+
+    monkeypatch.setattr(render.shutil, 'copyfile', fail_on_second)
+    with pytest.raises(PermissionError):
+        render.apply(config, ctx)
+    assert logo.is_file()
+    assert not second.exists()
+
+    monkeypatch.undo()
+    assert render.apply(config, ctx) == [second]
+    assert render.check(config, ctx) == []
+    assert render.apply(config, ctx) == []
 
 
 def test_publish_strips_markers_and_generators(fixture_repo):

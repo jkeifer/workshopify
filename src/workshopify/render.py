@@ -106,9 +106,20 @@ def _asset_errors(config: Config, ctx: Context) -> list[str]:
 def apply(config: Config, ctx: Context) -> list[Path]:
     """Re-render every configured file and asset in place; what changed.
 
-    Everything renders before anything is written -- and every asset source is
-    verified to exist first -- so a failing generator or a missing screenshot
-    cannot leave the tree half-rendered.
+    The rendered files are all-or-nothing: every one is rendered in memory
+    before any is written, so a failing generator leaves the tree untouched.
+    The assets are not, and the difference is deliberate. Every asset source
+    is verified to exist before the first write, which forecloses the failure
+    that actually happens -- a screenshot renamed out from under the context
+    module -- but the copies themselves run in sequence, so a permissions
+    error or a full disk partway through leaves the earlier copies, and every
+    rendered file, already applied. Buying atomicity there would mean holding
+    every asset in memory to guard against failures this rare.
+
+    Recoverable rather than atomic, then, and that is enough because apply is
+    idempotent: it writes only what differs from what it would write, so a
+    second run once the cause is cleared applies just the remainder and
+    converges. A run with nothing to do writes nothing and returns [].
     """
     rendered = _rendered(config, ctx)
     missing = [str(s) for s in sorted(ctx.assets.values()) if not s.is_file()]
