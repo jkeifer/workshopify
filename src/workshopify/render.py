@@ -125,6 +125,15 @@ def _run(text: str, namespace: dict[str, Any], fname: str, *, delete_code: bool)
 
 
 def _files(config: Config) -> list[Path]:
+    """Every repo file the render patterns name, or the refusal that none do.
+
+    Declaring no patterns and declaring patterns that match nothing are
+    different things and only the second is a mistake: a workshop that
+    templates nothing renders nothing, while a pattern that names no file is a
+    glob typo, and a typo'd pattern silently renders nothing forever.
+    """
+    if not config.render.files:
+        return []
     files = sorted(
         path
         for pattern in config.render.files

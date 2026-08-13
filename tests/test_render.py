@@ -65,6 +65,20 @@ def _snapshot(root):
     }
 
 
+def test_a_workshop_with_no_context_has_nothing_to_render(fixture_repo):
+    """Neither half of render has any work, and neither calls that an error.
+
+    The two halves are configured in different places -- rendered files in
+    pyproject, assets in the context module -- so a workshop that uses neither
+    has to be silent in both, not just in the one it declared away.
+    """
+    rewrite(fixture_repo, 'context = "context.py"\n', '')
+    rewrite(fixture_repo, 'files = ["src/*.py"]', 'files = []')
+    config, ctx = load_workshop(fixture_repo)
+    assert render.check(config, ctx) == []
+    assert render.apply(config, ctx) == []
+
+
 def test_fresh_fixture_renders_clean(fixture_repo):
     # The fresh fixture's rendered values are already up to date; the only
     # thing not yet in place is the declared asset, which apply() copies.
