@@ -15,7 +15,8 @@ so no caller has to reach inside it:
 
     apply(config, ctx)          re-render every configured file and asset in
                                 place
-    check(config, ctx)          error strings if any file or asset is stale
+    check(config, ctx)          error strings if any file or asset is stale;
+                                assets_too=False asks about the files alone
     publish(ctx, text, fname)   the text with markers and generators stripped,
                                 validated as a sound py:percent document
 
@@ -187,8 +188,16 @@ def apply(config: Config, ctx: Context) -> list[Path]:
     return [*writes, *assets.apply(copies)]
 
 
-def check(config: Config, ctx: Context) -> list[str]:
-    """Error strings for every stale rendered file and every wrong asset."""
+def check(config: Config, ctx: Context, *, assets_too: bool = True) -> list[str]:
+    """Error strings for every stale rendered file and every wrong asset.
+
+    The two halves answer independent questions, and a checkout that was never
+    given the assets can only answer the first: `assets_too=False` drops the
+    asset half entirely, so the result says nothing about the copies rather
+    than saying they are right. The rendered half is unaffected either way --
+    it is the question the caller kept, and skipping the other must not soften
+    it.
+    """
     errors = []
     for path, fresh in _rendered(config, ctx).items():
         current = fs.read(path)
@@ -204,6 +213,8 @@ def check(config: Config, ctx: Context) -> list[str]:
             n=0,
         )
         errors.append('\n'.join([f'{name}: stale rendered values', *diff]))
+    if not assets_too:
+        return errors
     return errors + assets.errors(config, ctx)
 
 

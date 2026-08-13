@@ -29,6 +29,109 @@ def test_check_reports_staleness_nonzero(fixture_repo, monkeypatch, capsys):
     assert 'stale' in capsys.readouterr().err
 
 
+def _uncarried_asset(repo, monkeypatch):
+    """A rendered repo whose declared asset is not in it, checking from inside.
+
+    What CI looks like when the copies were never committed: everything else
+    is current, and the asset half of `check` fails for a reason that says
+    nothing about that. The variable is cleared because its absence is what
+    every one of these tests measures the other cases against, and the
+    developer's own shell is entitled to have it set.
+    """
+    monkeypatch.chdir(repo)
+    monkeypatch.delenv('WORKSHOPIFY_SKIP_ASSETS', raising=False)
+    assert main(['render']) == 0
+    (repo / 'notebooks' / 'assets' / 'logo.png').unlink()
+
+
+def test_check_can_be_told_to_skip_the_assets(fixture_repo, monkeypatch):
+    _uncarried_asset(fixture_repo, monkeypatch)
+    assert main(['check']) == 1
+    assert main(['check', '--skip-assets']) == 0
+
+
+def test_the_environment_can_say_it_where_argv_is_not_the_callers(
+    fixture_repo,
+    monkeypatch,
+):
+    """The reason the flag has an envvar at all: a runner that owns the argv.
+
+    A pre-commit-style hook decides what `workshopify check` is invoked with
+    and passes the environment through untouched, so the environment is the
+    only place its user can say this.
+    """
+    _uncarried_asset(fixture_repo, monkeypatch)
+    monkeypatch.setenv('WORKSHOPIFY_SKIP_ASSETS', '1')
+    assert main(['check']) == 0
+
+
+def test_the_environment_variable_set_falsy_does_not_skip(fixture_repo, monkeypatch):
+    """Set is not the same as true, which is why click parses it as a flag.
+
+    A truthiness test on the string would read `=0` as "skip", turning off the
+    variable into something that can only be done by unsetting it.
+    """
+    _uncarried_asset(fixture_repo, monkeypatch)
+    monkeypatch.setenv('WORKSHOPIFY_SKIP_ASSETS', '0')
+    assert main(['check']) == 1
+
+
+def test_the_flag_beats_the_environment_variable(fixture_repo, monkeypatch):
+    _uncarried_asset(fixture_repo, monkeypatch)
+    monkeypatch.setenv('WORKSHOPIFY_SKIP_ASSETS', '0')
+    assert main(['check', '--skip-assets']) == 0
+
+
+def test_an_unreadable_environment_variable_names_itself(
+    fixture_repo,
+    monkeypatch,
+    capsys,
+):
+    """The diagnostic has to name the variable: nothing on the command line did.
+
+    Whoever runs into this is looking at an argv that mentions no such option,
+    so a complaint about `--skip-assets` alone would send them hunting through
+    a wrapper they may not have written.
+    """
+    _uncarried_asset(fixture_repo, monkeypatch)
+    monkeypatch.setenv('WORKSHOPIFY_SKIP_ASSETS', 'maybe')
+    assert main(['check']) == 2
+    assert 'WORKSHOPIFY_SKIP_ASSETS' in capsys.readouterr().err
+
+
+def test_skipping_the_assets_does_not_soften_the_rendered_half(
+    fixture_repo,
+    monkeypatch,
+    capsys,
+):
+    """The flag declines to inspect one half; it does not forgive the other.
+
+    This is what keeps `--skip-assets` from quietly becoming a way to make
+    `check` pass, which is the whole value of running it in CI.
+    """
+    _uncarried_asset(fixture_repo, monkeypatch)
+    rewrite(fixture_repo, 'greeting = "hello"', 'greeting = "yo"')
+    assert main(['check', '--skip-assets']) == 1
+    assert 'stale' in capsys.readouterr().err
+
+
+def test_the_success_line_claims_only_what_was_checked(
+    fixture_repo,
+    monkeypatch,
+    capsys,
+):
+    """A run that never looked at the assets must not report them current."""
+    monkeypatch.chdir(fixture_repo)
+    monkeypatch.delenv('WORKSHOPIFY_SKIP_ASSETS', raising=False)
+    assert main(['render']) == 0
+    capsys.readouterr()
+
+    assert main(['check']) == 0
+    assert capsys.readouterr().err == 'rendered values and assets are current\n'
+    assert main(['check', '--skip-assets']) == 0
+    assert capsys.readouterr().err == 'rendered values are current\n'
+
+
 def test_set_and_check_roundtrip(fixture_repo, monkeypatch):
     monkeypatch.chdir(fixture_repo)
     assert main(['set', 'greeting', 'kia ora']) == 0

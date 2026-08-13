@@ -92,13 +92,39 @@ def _render(config: Config) -> int:
 
 
 @cli.command('check', help='report stale rendered values or assets; exit 1 if any')
+@click.option(
+    '--skip-assets',
+    is_flag=True,
+    # Answerable from the environment as well as from argv, because the runner
+    # that most needs this owns the argv: a pre-commit-style hook passes
+    # nothing through but the environment. What it needs to say is that this
+    # checkout never committed the assets, so the asset half fails for a reason
+    # that says nothing about whether the repo is stale. click reads the
+    # variable with a flag's vocabulary, so `=0` means do not skip and an
+    # unrecognised word is a usage error naming the variable -- neither of
+    # which a truthiness test on the string would get right.
+    envvar='WORKSHOPIFY_SKIP_ASSETS',
+    show_envvar=True,
+    help='skip checking assets, for a checkout that does not carry them',
+)
 @_discovered
-def _check(config: Config) -> int:
-    errors = render.check(config, context.load(config))
+def _check(config: Config, skip_assets: bool) -> int:
+    errors = render.check(
+        config,
+        context.load(config),
+        assets_too=not skip_assets,
+    )
     _err(*errors)
     if errors:
         return 1
-    _err('rendered values and assets are current')
+    # Success is the one line that has to be narrower when the check was: a
+    # report that claims the assets are current is worth less than nothing
+    # from a run that never looked at them.
+    _err(
+        'rendered values are current'
+        if skip_assets
+        else 'rendered values and assets are current',
+    )
     return 0
 
 

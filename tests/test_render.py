@@ -150,6 +150,15 @@ def test_check_reports_a_missing_asset_source(fixture_repo):
     assert any('missing; cannot check notebooks/assets/logo.png' in e for e in errors)
 
 
+def test_check_can_be_asked_about_the_rendered_values_alone(fixture_repo):
+    # The fresh fixture has not had its asset copied yet, so the default call
+    # has something to say about it and the narrowed one must have nothing --
+    # while the rendered values, clean in both, stay the question being asked.
+    config, ctx = load_workshop(fixture_repo)
+    assert any('logo.png' in e for e in render.check(config, ctx))
+    assert render.check(config, ctx, assets_too=False) == []
+
+
 def test_apply_is_idempotent(fixture_repo):
     # The claim apply's docstring makes: a second run writes nothing at all,
     # so the tree -- contents and mtimes alike -- is untouched.
