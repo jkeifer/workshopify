@@ -95,6 +95,22 @@ print(word)
 """
 
 
+@pytest.fixture(autouse=True)
+def _no_ambient_skip_assets(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The environment `check` reads is the suite's to state, not the shell's.
+
+    `WORKSHOPIFY_SKIP_ASSETS` is answerable from the environment precisely so
+    that something other than the argv can set it, and a developer who exported
+    it to get a real workshop's hooks past a checkout without assets is then
+    running this suite against a different command than it describes. Set to an
+    unparseable word it fails three tests for a usage error none of them is
+    about; set to `1` it fails nothing and hollows out two, which assert 0 and
+    get it because the asset half never ran. The second is the worse one, so
+    the guarantee is the suite's rather than each test's to remember.
+    """
+    monkeypatch.delenv('WORKSHOPIFY_SKIP_ASSETS', raising=False)
+
+
 @pytest.fixture
 def fixture_repo(tmp_path: Path) -> Path:
     root = tmp_path / 'repo'

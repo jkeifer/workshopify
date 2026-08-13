@@ -151,12 +151,25 @@ def test_check_reports_a_missing_asset_source(fixture_repo):
 
 
 def test_check_can_be_asked_about_the_rendered_values_alone(fixture_repo):
-    # The fresh fixture has not had its asset copied yet, so the default call
-    # has something to say about it and the narrowed one must have nothing --
-    # while the rendered values, clean in both, stay the question being asked.
+    """Exactly one half is dropped, which takes both halves being wrong to see.
+
+    Against a clean fixture the narrowed call returns nothing whatever it does
+    with the rendered values, so it would pass while answering [] to every
+    question. Both are broken here: the asset is uncopied in the fresh fixture
+    and the param is rewritten out from under the rendered file, so the two
+    diagnostics are told apart by which survives.
+    """
+    rewrite(fixture_repo, 'greeting = "hello"', 'greeting = "tena koe"')
     config, ctx = load_workshop(fixture_repo)
-    assert any('logo.png' in e for e in render.check(config, ctx))
-    assert render.check(config, ctx, assets_too=False) == []
+    both = render.check(config, ctx)
+    assert any('logo.png' in e for e in both)
+    assert any('stale rendered values' in e for e in both)
+
+    narrowed = render.check(config, ctx, assets_too=False)
+    assert not any('logo.png' in e for e in narrowed)
+    assert [e.splitlines()[0] for e in narrowed] == [
+        'src/01_example.py: stale rendered values',
+    ]
 
 
 def test_apply_is_idempotent(fixture_repo):

@@ -93,16 +93,20 @@ def _render(config: Config) -> int:
 
 @cli.command('check', help='report stale rendered values or assets; exit 1 if any')
 @click.option(
-    '--skip-assets',
-    is_flag=True,
-    # Answerable from the environment as well as from argv, because the runner
-    # that most needs this owns the argv: a pre-commit-style hook passes
-    # nothing through but the environment. What it needs to say is that this
-    # checkout never committed the assets, so the asset half fails for a reason
-    # that says nothing about whether the repo is stale. click reads the
-    # variable with a flag's vocabulary, so `=0` means do not skip and an
-    # unrecognised word is a usage error naming the variable -- neither of
-    # which a truthiness test on the string would get right.
+    # Both names, because the environment can set this and only argv can take
+    # it back. A one-way flag leaves an exported WORKSHOPIFY_SKIP_ASSETS
+    # answerable by nothing shorter than `env -u`, which is not what a person
+    # reaches for mid-session to check one repo in full.
+    '--skip-assets/--no-skip-assets',
+    default=False,
+    # Answerable from the environment at all because the runner that most needs
+    # this owns the argv: a pre-commit-style hook passes nothing through but
+    # the environment. What it needs to say is that this checkout never
+    # committed the assets, so the asset half fails for a reason that says
+    # nothing about whether the repo is stale. click reads the variable with a
+    # flag's vocabulary, so `=0` means do not skip and an unrecognised word is
+    # a usage error naming the variable -- neither of which a truthiness test
+    # on the string would get right. Either name, given, beats it outright.
     envvar='WORKSHOPIFY_SKIP_ASSETS',
     show_envvar=True,
     help='skip checking assets, for a checkout that does not carry them',

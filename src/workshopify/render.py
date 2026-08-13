@@ -16,7 +16,8 @@ so no caller has to reach inside it:
     apply(config, ctx)          re-render every configured file and asset in
                                 place
     check(config, ctx)          error strings if any file or asset is stale;
-                                assets_too=False asks about the files alone
+                                assets_too=False asks about the rendered
+                                files alone
     publish(ctx, text, fname)   the text with markers and generators stripped,
                                 validated as a sound py:percent document
 

@@ -34,12 +34,10 @@ def _uncarried_asset(repo, monkeypatch):
 
     What CI looks like when the copies were never committed: everything else
     is current, and the asset half of `check` fails for a reason that says
-    nothing about that. The variable is cleared because its absence is what
-    every one of these tests measures the other cases against, and the
-    developer's own shell is entitled to have it set.
+    nothing about that. No environment is set here -- the suite guarantees the
+    variable is unset, so what each test sets is the whole of what it says.
     """
     monkeypatch.chdir(repo)
-    monkeypatch.delenv('WORKSHOPIFY_SKIP_ASSETS', raising=False)
     assert main(['render']) == 0
     (repo / 'notebooks' / 'assets' / 'logo.png').unlink()
 
@@ -76,10 +74,29 @@ def test_the_environment_variable_set_falsy_does_not_skip(fixture_repo, monkeypa
     assert main(['check']) == 1
 
 
-def test_the_flag_beats_the_environment_variable(fixture_repo, monkeypatch):
+@pytest.mark.parametrize(
+    ('variable', 'flag', 'expected'),
+    [
+        ('0', '--skip-assets', 0),
+        ('1', '--no-skip-assets', 1),
+    ],
+)
+def test_either_name_beats_the_environment_variable(
+    variable,
+    flag,
+    expected,
+    fixture_repo,
+    monkeypatch,
+):
+    """Both directions, because only one of them is the environment's to lose.
+
+    An exported WORKSHOPIFY_SKIP_ASSETS=1 is the case the second name exists
+    for: without it, the one checkout the developer does want inspected in full
+    can only be asked for by unsetting the variable for that command.
+    """
     _uncarried_asset(fixture_repo, monkeypatch)
-    monkeypatch.setenv('WORKSHOPIFY_SKIP_ASSETS', '0')
-    assert main(['check', '--skip-assets']) == 0
+    monkeypatch.setenv('WORKSHOPIFY_SKIP_ASSETS', variable)
+    assert main(['check', flag]) == expected
 
 
 def test_an_unreadable_environment_variable_names_itself(
@@ -122,7 +139,6 @@ def test_the_success_line_claims_only_what_was_checked(
 ):
     """A run that never looked at the assets must not report them current."""
     monkeypatch.chdir(fixture_repo)
-    monkeypatch.delenv('WORKSHOPIFY_SKIP_ASSETS', raising=False)
     assert main(['render']) == 0
     capsys.readouterr()
 
