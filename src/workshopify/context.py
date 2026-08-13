@@ -1,9 +1,11 @@
 """Execute the repo's context module: the procedural half of the config.
 
-The context module is the one piece of a workshop repo that must be code --
-its module-level names become the namespace the cog generators run in, and
-its optional ASSETS dict declares binary files derived from that namespace
-(copied on apply, byte-verified on check).
+The context module is the one piece of a workshop repo that is code rather
+than declaration -- its module-level names become the namespace the cog
+generators run in, and its optional ASSETS dict declares binary files derived
+from that namespace (copied on apply, byte-verified on check). It is also the
+one piece a workshop may do without: naming no module means an empty context,
+which is what a workshop that templates nothing has.
 
 It executes with `params` (the [tool.workshopify.params] table) and
 `__file__` pre-bound, and with its own directory on sys.path so sibling
@@ -108,7 +110,17 @@ def _assets(config: Config, path: Path, namespace: dict[str, Any]) -> dict[Path,
 
 
 def load(config: Config) -> Context:
-    """The context module, executed, with what it declared alongside it."""
+    """The context module, executed, with what it declared alongside it.
+
+    A workshop that templates nothing and carries no assets names no module,
+    and the empty context is what it means: no namespace, because there are no
+    generators to run in one, and no assets to copy or verify. Every consumer
+    already iterates one collection or the other, so that case needs no
+    handling past returning it -- an empty namespace is a namespace, and cog
+    over text with no markers is a no-op.
+    """
+    if config.context is None:
+        return Context(namespace={}, assets={})
     path = (config.root / config.context).resolve()
     if not path.is_file():
         raise WorkshopifyError(f'error: context module {path} does not exist')

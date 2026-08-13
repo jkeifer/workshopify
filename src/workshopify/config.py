@@ -1,8 +1,8 @@
 """The declarative half of a workshop repo: [tool.workshopify] in pyproject.
 
 Everything mechanical the tool does is driven from here; the one procedural
-piece -- the context module -- is only *named* here and executed by
-workshopify.context.
+piece -- the context module, which a workshop need not have -- is only *named*
+here and executed by workshopify.context.
 
 The frozen dataclasses below hold every default there is. `load` passes only
 the keys pyproject.toml actually gave, so an absent key falls through to its
@@ -165,7 +165,7 @@ class NotebooksConfig:
 @dataclass(frozen=True)
 class Config:
     root: Path
-    context: Path
+    context: Path | None
     render: RenderConfig
     build: BuildConfig
     notebooks: NotebooksConfig
@@ -233,8 +233,13 @@ class Config:
         known = {f.name for f in fields(cls)} - {'root'}
         top = _checked(table, known, _where())
 
+        # A workshop that renders nothing and declares no assets has no
+        # procedural half at all, and says so by naming no module. Absent is
+        # the only way to say it: a key that is present must name a file that
+        # exists, so a renamed or misspelled module stays an error rather than
+        # quietly becoming a workshop that templates nothing.
         context = top.get('context')
-        if not isinstance(context, str):
+        if context is not None and not isinstance(context, str):
             raise WorkshopifyError(
                 f'error: {_where()} context must name the context module',
             )
@@ -246,13 +251,13 @@ class Config:
             raise WorkshopifyError(f'error: {_where("params")} must be a table')
 
         # Only the three uniform subtables go through `_sub`; `context` and
-        # `params` above are each one of a kind -- one mandatory and read as a
+        # `params` above are each one of a kind -- one optional and read as a
         # path, one an arbitrary namespace only shape-checked -- and covering
         # them would cost a richer annotation-to-behavior vocabulary than two
         # one-off keys are worth.
         return cls(
             root=root,
-            context=Path(context),
+            context=Path(context) if context is not None else None,
             render=_sub(top, 'render', RenderConfig),
             build=_sub(top, 'build', BuildConfig),
             notebooks=_sub(top, 'notebooks', NotebooksConfig),

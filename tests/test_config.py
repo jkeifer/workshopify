@@ -92,6 +92,17 @@ def test_context_must_name_a_module(fixture_repo):
         Config.load(fixture_repo)
 
 
+def test_context_is_optional(fixture_repo):
+    """A workshop with nothing to render and no assets names no module.
+
+    Absent is the only way to say that: a key that is present still has to
+    name a module that exists, so a typo stays a typo rather than becoming
+    silence.
+    """
+    rewrite(fixture_repo, 'context = "context.py"\n', '')
+    assert Config.load(fixture_repo).context is None
+
+
 def test_build_branch_must_be_a_string(fixture_repo):
     rewrite(
         fixture_repo,

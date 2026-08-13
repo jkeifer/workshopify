@@ -86,6 +86,19 @@ def test_sibling_imports_work(fixture_repo):
     assert ctx.namespace['word'] == '42'
 
 
+def test_no_context_declared_is_an_empty_context(fixture_repo):
+    """What makes a context empty is the absent key, not an absent file.
+
+    The fixture's own context.py is left on disk to say so: a workshop that
+    declares no module gets no namespace and no assets even where one sits
+    beside the pyproject under the conventional name.
+    """
+    rewrite(fixture_repo, 'context = "context.py"\n', '')
+    ctx = context.load(Config.load(fixture_repo))
+    assert ctx.namespace == {}
+    assert ctx.assets == {}
+
+
 def test_missing_context_module_diagnoses(fixture_repo):
     (fixture_repo / 'context.py').unlink()
     with pytest.raises(WorkshopifyError, match='context module'):
