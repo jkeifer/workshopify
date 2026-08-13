@@ -4,14 +4,24 @@ Every module below raises WorkshopifyError carrying the full diagnostic;
 main() prints it to stderr and returns 1. Nothing else in the package may
 exit the process, and nothing else may print: the modules below return what
 they computed, and every line the user sees is rendered here.
+
+click parses and does no more than that. `standalone_mode=False` is what
+holds it to that: it hands main() the usage error instead of showing it and
+exiting, so a misspelled option reaches the user by the same route a broken
+config does, and the exit stays this module's to decide.
 """
 
 from __future__ import annotations
 
-import argparse
+import io
 import sys
 
+from collections.abc import Callable
+from functools import wraps
 from pathlib import Path
+from typing import Concatenate
+
+import click
 
 from workshopify import build, context, notebooks, params, render, worktree
 from workshopify.config import Config
@@ -30,13 +40,60 @@ def _err(*lines: str) -> None:
         print(line, file=sys.stderr)
 
 
-def _render(args: argparse.Namespace, config: Config) -> int:
+def _discovered[**P, R](
+    command: Callable[Concatenate[Config, P], R],
+) -> Callable[P, R]:
+    """Hand a command the repo it works from, found when the command runs.
+
+    Every subcommand works from the discovered repo, so discovery is spelled
+    once -- here rather than in the group callback, which click runs before it
+    parses the subcommand's own arguments, `--help` among them. Asking what
+    `check` does would then need a workshop repo to answer, and the person
+    asking is likeliest to be standing outside one. Wrapping each callback
+    instead defers discovery to the invocation that has something to discover
+    it for.
+    """
+
+    @wraps(command)
+    def invoke(*args: P.args, **kwargs: P.kwargs) -> R:
+        return command(Config.discover(), *args, **kwargs)
+
+    return invoke
+
+
+@click.group(
+    help=(
+        'Build a template-rendered, notebook-based workshop repository. '
+        'The repo declares everything mechanical in [tool.workshopify] '
+        'tables in its pyproject.toml; these commands do the rest.'
+    ),
+    # click offers only `--help`; argparse gave both, and `-h` is the spelling
+    # a hand reaches for. Set on the group, inherited by every subcommand
+    # through the context, so there is one list rather than seven.
+    context_settings={'help_option_names': ['-h', '--help']},
+)
+def cli() -> None:
+    """The group decides nothing, so that `--help` needs nothing decided.
+
+    click runs this before it parses the subcommand's own arguments -- which
+    is where `--help` is -- so anything decided here is decided before anyone
+    can have asked merely what a command does. It knows which subcommand by
+    now; it does not yet know that the subcommand was only asked to explain
+    itself.
+    """
+
+
+@cli.command('render', help='re-render templated values and assets in place')
+@_discovered
+def _render(config: Config) -> int:
     changed = render.apply(config, context.load(config))
     _err(*(f'rendered {config.display_path(path)}' for path in changed))
     return 0
 
 
-def _check(args: argparse.Namespace, config: Config) -> int:
+@cli.command('check', help='report stale rendered values or assets; exit 1 if any')
+@_discovered
+def _check(config: Config) -> int:
     errors = render.check(config, context.load(config))
     _err(*errors)
     if errors:
@@ -45,17 +102,44 @@ def _check(args: argparse.Namespace, config: Config) -> int:
     return 0
 
 
-def _generate(args: argparse.Namespace, config: Config) -> int:
+@cli.command('generate', help='generate the notebooks and notes from src/')
+@click.option(
+    # `Path`, not `click.Path`: the latter stats what it is given -- it is
+    # `readable=True` by default -- and would refuse at parse time a directory
+    # that the step below is the one entitled to complain about. Conversion is
+    # all that is wanted here, and the metavar is `PATH` either way.
+    '--output-dir',
+    type=Path,
+    default=None,
+    help='write the generated tree here instead of into the repo',
+)
+@_discovered
+def _generate(config: Config, output_dir: Path | None) -> int:
     written = notebooks.generate(
         config,
         context.load(config),
-        args.output_dir or config.root,
+        output_dir or config.root,
     )
     _err(*(f'wrote {config.display_path(path)}' for path in written))
     return 0
 
 
-def _build(args: argparse.Namespace, config: Config) -> int:
+@cli.command(
+    'build',
+    help='assemble the published workshop tree into its branch worktree',
+)
+@click.option(
+    '--clean',
+    is_flag=True,
+    help='remove every tracked file from the worktree before building',
+)
+@click.option(
+    '--overwrite-dirty',
+    is_flag=True,
+    help='build over uncommitted changes in the worktree',
+)
+@_discovered
+def _build(config: Config, clean: bool, overwrite_dirty: bool) -> int:
     prepared = worktree.prepare_worktree(
         config.root,
         config.build.branch,
@@ -67,8 +151,8 @@ def _build(args: argparse.Namespace, config: Config) -> int:
         config,
         context.load(config),
         prepared.path,
-        clean_first=args.clean,
-        overwrite_dirty=args.overwrite_dirty,
+        clean_first=clean,
+        overwrite_dirty=overwrite_dirty,
     )
     _publish_instructions(prepared.path)
     # Last, after the success output above, so the one failure this report
@@ -104,24 +188,37 @@ def _stale_report(stale: list[Path]) -> None:
     )
 
 
-def _set(args: argparse.Namespace, config: Config) -> int:
-    rewritten = params.set_param(config, args.key, args.value)
+@cli.command('set', help='set a [tool.workshopify.params] value and re-render')
+@click.argument('key')
+@click.argument('value')
+@_discovered
+def _set(config: Config, key: str, value: str) -> int:
+    rewritten = params.set_param(config, key, value)
     _err(
         *(f'updated {config.display_path(path)}' for path in rewritten.paths),
         # The recorded value, not the argument: they differ in type whenever
         # the param is not a string, and the file now holds the former.
-        f'set {args.key} = {rewritten.value!r}',
+        f'set {key} = {rewritten.value!r}',
     )
     return 0
 
 
-def _worktree(args: argparse.Namespace, config: Config) -> int:
-    path = args.path or config.root / args.branch
+@cli.command('worktree', help='prepare a branch worktree without building')
+@click.argument('branch')
+@click.option(
+    '--path',
+    type=Path,
+    default=None,
+    help='check the worktree out here instead of at <repo>/<branch>',
+)
+@click.option('--orphan', is_flag=True, help='start the branch with no history')
+@_discovered
+def _worktree(config: Config, branch: str, path: Path | None, orphan: bool) -> int:
     prepared = worktree.prepare_worktree(
         config.root,
-        args.branch,
-        path,
-        orphan=args.orphan,
+        branch,
+        path or config.root / branch,
+        orphan=orphan,
     )
     _err(*prepared.notes)
     # The path is the command's result, so it goes to stdout where it can be
@@ -130,65 +227,45 @@ def _worktree(args: argparse.Namespace, config: Config) -> int:
     return 0
 
 
-def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog='workshopify',
-        description=(
-            'Build a template-rendered, notebook-based workshop repository. '
-            'The repo declares everything mechanical in [tool.workshopify] '
-            'tables in its pyproject.toml; these commands do the rest.'
-        ),
-    )
-    sub = parser.add_subparsers(dest='command', required=True)
-
-    sub.add_parser(
-        'render',
-        help='re-render templated values and assets in place',
-    ).set_defaults(func=_render)
-    sub.add_parser(
-        'check',
-        help='report stale rendered values or assets; exit 1 if any',
-    ).set_defaults(func=_check)
-
-    generate = sub.add_parser(
-        'generate',
-        help='generate the notebooks and notes from src/',
-    )
-    generate.add_argument('--output-dir', type=Path, default=None)
-    generate.set_defaults(func=_generate)
-
-    build_cmd = sub.add_parser(
-        'build',
-        help='assemble the published workshop tree into its branch worktree',
-    )
-    build_cmd.add_argument('--clean', action='store_true')
-    build_cmd.add_argument('--overwrite-dirty', action='store_true')
-    build_cmd.set_defaults(func=_build)
-
-    set_cmd = sub.add_parser(
-        'set',
-        help='set a [tool.workshopify.params] value and re-render',
-    )
-    set_cmd.add_argument('key')
-    set_cmd.add_argument('value')
-    set_cmd.set_defaults(func=_set)
-
-    wt = sub.add_parser('worktree', help='prepare a branch worktree without building')
-    wt.add_argument('branch')
-    wt.add_argument('--path', type=Path)
-    wt.add_argument('--orphan', action='store_true')
-    wt.set_defaults(func=_worktree)
-
-    return parser
-
-
 def main(argv: list[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
     try:
-        # Every subcommand works from the discovered repo, so it is found once
-        # here -- inside the try, because failing to find one is the first
-        # diagnostic a user outside a workshop repo gets.
-        return args.func(args, Config.discover())
+        # Discovery happens under here, one `_discovered` command in, because
+        # failing to find a workshop repo is the first diagnostic a user
+        # outside one gets. click's own refusals arrive by the same door: told
+        # not to stand alone, it raises them here rather than printing them.
+        return (
+            cli.main(
+                argv if argv is not None else sys.argv[1:],
+                prog_name='workshopify',
+                standalone_mode=False,
+            )
+            or 0
+        )
     except WorkshopifyError as e:
         _err(str(e))
         return 1
+    except click.ClickException as e:
+        _err(_shown(e))
+        return e.exit_code
+    except click.Abort:
+        # Ctrl-C, or EOF at a prompt. click has already turned the
+        # KeyboardInterrupt into this and echoed a bare newline of its own on
+        # the way; what is left to decide is the status, and 128 + SIGINT is
+        # what a shell expects to be told.
+        return 130
+
+
+def _shown(error: click.ClickException) -> str:
+    """A usage error as click writes it, captured rather than emitted.
+
+    click formats these better than this file would: `set` missing its second
+    argument gets the usage line and the `--help` hint alongside the
+    complaint, and each error subclass knows its own shape -- no subcommand at
+    all prints the whole help and no `Error:` line, which is right. What is
+    not click's to decide is where it goes, so it is written to a buffer and
+    handed to `_err` like every other diagnostic. The capitalised `Error:` is
+    the price, and it is cheaper than reimplementing the other three lines.
+    """
+    shown = io.StringIO()
+    error.show(shown)
+    return shown.getvalue().rstrip('\n')

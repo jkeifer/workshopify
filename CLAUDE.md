@@ -28,7 +28,19 @@ The package is a src-layout library with one command-line surface.
 
 - **Nothing below `cli.py` exits the process.** Every module raises
   `WorkshopifyError` carrying the full diagnostic; `cli.py` prints it to stderr
-  and returns 1. Do not add `sys.exit` anywhere else.
+  and returns 1. Do not add `sys.exit` anywhere else -- nor let a library add
+  one on the package's behalf. click exits by default, on a usage error and on
+  `--help` alike, so `cli.py` invokes it with `standalone_mode=False`: the
+  usage error comes back as a `ClickException` that `main` renders and returns
+  the `exit_code` of, and the help arrives as a return value of 0. Drop that
+  keyword and both of those become exits, taken somewhere this file cannot
+  see. What it buys is the exits click takes on the package's behalf, which is
+  not every exit in click, and the residue is worth knowing rather than
+  claiming away: shell completion is served before click's own `try` and exits
+  there by design, and a broken stdout exits 1 whatever it was told. `Ctrl-C`
+  would be a third, since click raises `Abort`, which is not a
+  `ClickException` -- so `main` names that one and returns 130, which is what
+  handling a residue looks like if either of the others ever earns it.
 - **Every foreign failure is diagnosed at its boundary.** The invariant above
   only holds where the package meets code that does not know it exists: the
   filesystem, subprocesses, cog. Those calls go through `errors.diagnosed`,
@@ -56,7 +68,15 @@ The package is a src-layout library with one command-line surface.
   enforces this. Ruff cannot see a *library* writing on the package's behalf,
   so cog's output channels are bound away from the process streams in
   `render._run`; `workshopify worktree` prints its path to stdout as the
-  command's result, and a chatty generator would otherwise corrupt it.
+  command's result, and a chatty generator would otherwise corrupt it. The
+  same `standalone_mode=False` is what stops click writing its own refusals:
+  a misspelled option is handed back to `main`, which asks click's formatter
+  for the text -- the usage line and the `--help` hint are worth more than a
+  matching lowercase `error:` -- and then writes it through `_err`, on the
+  stream this file chose rather than the one the library would have. The one
+  thing click still prints itself is `--help`, on stdout, which is the right
+  stream by the same rule the worktree path follows: it is what was asked for,
+  not commentary on it.
 - **Generated output is a pure function of its source.** Notebook cell ids are
   positional, not random, so re-rendering an unchanged source produces a
   byte-identical file and a publish diff contains only real changes. This is

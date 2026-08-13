@@ -1,9 +1,11 @@
 import json
 import subprocess
 
+import pytest
+
 from conftest import git_repo, rewrite, uv_lock
 
-from workshopify import build
+from workshopify import build, render
 from workshopify.cli import main
 
 
@@ -93,6 +95,103 @@ def test_a_failure_from_cog_arrives_as_a_diagnostic_too(
     err = capsys.readouterr().err
     assert err.startswith('error:')
     assert '02_broken.py' in err
+
+
+def test_an_unknown_option_is_a_diagnostic_like_any_other(
+    fixture_repo,
+    monkeypatch,
+    capsys,
+):
+    """click parses; it does not get to report. That is what stderr is for.
+
+    Told to stand alone it would show the refusal itself and exit the process,
+    which is two invariants at once. Handed back here it is rendered where
+    every other failure is, leaving stdout a value a caller can pipe -- and
+    rendered whole: the usage line and the hint are the useful two thirds of
+    what click writes, and dropping to the bare message would lose them.
+    """
+    monkeypatch.chdir(fixture_repo)
+    assert main(['check', '--bogus']) == 2
+    captured = capsys.readouterr()
+    assert captured.err.splitlines() == [
+        'Usage: workshopify check [OPTIONS]',
+        "Try 'workshopify check --help' for help.",
+        '',
+        "Error: No such option '--bogus'.",
+    ]
+    assert captured.out == ''
+
+
+def test_a_missing_argument_is_reported_with_its_usage(
+    fixture_repo,
+    monkeypatch,
+    capsys,
+):
+    monkeypatch.chdir(fixture_repo)
+    assert main(['set', 'greeting']) == 2
+    captured = capsys.readouterr()
+    assert captured.err.splitlines() == [
+        'Usage: workshopify set [OPTIONS] KEY VALUE',
+        "Try 'workshopify set --help' for help.",
+        '',
+        "Error: Missing argument 'VALUE'.",
+    ]
+    assert captured.out == ''
+
+
+def test_naming_no_subcommand_says_what_the_subcommands_are(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    """No `Error:` line here, deliberately: nothing was got wrong yet.
+
+    Naming no subcommand is the one usage error whose whole answer is the
+    help, so click prints that and nothing else -- which is the reason these
+    are rendered by its formatter rather than from the message alone.
+    """
+    monkeypatch.chdir(tmp_path)
+    assert main([]) == 2
+    captured = capsys.readouterr()
+    assert 'Usage: workshopify' in captured.err
+    assert 'Error:' not in captured.err
+    assert captured.out == ''
+
+
+def test_subcommand_help_works_outside_a_workshop_repo(tmp_path, monkeypatch, capsys):
+    """Help is the one thing that must not need what it describes.
+
+    Discovering the repo anywhere earlier than the command it is for -- in the
+    group callback, say -- makes `workshopify check --help` fail wherever
+    someone is most likely to ask it: outside a workshop repo, wondering what
+    the command does.
+    """
+    monkeypatch.chdir(tmp_path)
+    assert main(['check', '--help']) == 0
+    assert 'stale' in capsys.readouterr().out
+
+
+@pytest.mark.parametrize('argv', [['-h'], ['check', '-h']])
+def test_dash_h_asks_for_help_too(argv, tmp_path, monkeypatch, capsys):
+    """The short spelling argparse gave for free, at both levels."""
+    monkeypatch.chdir(tmp_path)
+    assert main(argv) == 0
+    assert 'Usage: workshopify' in capsys.readouterr().out
+
+
+def test_an_interrupt_exits_one_hundred_and_thirty(fixture_repo, monkeypatch):
+    """click turns Ctrl-C into an Abort, which is not a ClickException.
+
+    Uncaught it leaves main() as a traceback over a thing the user did on
+    purpose. 130 is 128 + SIGINT, which is what the shell reads it as.
+    """
+
+    def interrupted(*args, **kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.chdir(fixture_repo)
+    monkeypatch.setattr(render, 'apply', interrupted)
+    assert main(['render']) == 130
 
 
 def test_worktree_subcommand(fixture_repo, monkeypatch, capsys):
